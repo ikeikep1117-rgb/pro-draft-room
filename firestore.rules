@@ -25,7 +25,7 @@ service cloud.firestore {
       allow update, delete: if isHost(roomId);
       allow update: if isMember(roomId) &&
         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['turnIndex', 'round']);
+          .hasOnly(['turnIndex', 'round', 'announcement']);
 
       match /members/{memberId} {
         allow read: if signedIn();
