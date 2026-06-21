@@ -489,8 +489,8 @@ function renderAnnouncement() {
   $("#reveal-screen").classList.remove("hidden");
   $("#reveal-curtain").classList.remove("is-revealed");
   $("#reveal-round").textContent = `${state.room.name} — ROUND ${String(announcement.round).padStart(2, "0")}`;
-  $("#reveal-order").textContent = `第${index + 1}巡選択希望選手`;
-  $("#reveal-prelude-text").textContent = `第${index + 1}巡選択希望選手`;
+  $("#reveal-order").textContent = `第${announcement.round}巡選択希望選手`;
+  $("#reveal-prelude-text").textContent = `第${announcement.round}巡選択希望選手`;
   $("#reveal-team").textContent = item.memberName;
   $("#reveal-seal").textContent = item.memberName.slice(0, 1);
   $("#reveal-player").textContent = item.playerName;
