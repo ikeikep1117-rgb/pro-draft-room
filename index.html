@@ -132,13 +132,13 @@
 
   <dialog id="player-dialog" class="modal">
     <form id="player-form" method="dialog">
-      <button class="modal-close" value="cancel" type="submit">×</button><p class="eyebrow">ADD TO PLAYER BOARD</p><h2>候補選手を追加</h2>
+      <button class="modal-close" value="cancel" type="submit">×</button><p class="eyebrow">PLAYER BOARD EDITOR</p><h2 id="player-dialog-title">候補選手を追加</h2>
       <label>選手名<input id="new-player-name" maxlength="30" placeholder="例：山田 太郎" required></label>
       <div class="form-grid">
         <label>ポジション<select id="new-player-position"><option>投手</option><option>捕手</option><option>内野手</option><option>外野手</option></select></label>
         <label>所属・学校<input id="new-player-team" maxlength="30" placeholder="例：北海大学"></label>
       </div>
-      <button class="primary-button" value="default" type="submit">選手を登録する</button>
+      <button id="player-submit" class="primary-button" value="default" type="submit">選手を登録する</button>
     </form>
   </dialog>
 

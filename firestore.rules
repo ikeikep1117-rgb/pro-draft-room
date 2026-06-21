@@ -34,8 +34,15 @@ service cloud.firestore {
       }
 
       match /players/{playerId} {
-        allow read, create: if isMember(roomId);
-        allow update, delete: if isHost(roomId);
+        allow read: if isMember(roomId);
+        allow create: if isMember(roomId) &&
+          request.resource.data.creatorId == request.auth.uid;
+        allow update: if isHost(roomId) ||
+          (isMember(roomId) &&
+            resource.data.creatorId == request.auth.uid &&
+            request.resource.data.creatorId == resource.data.creatorId);
+        allow delete: if isHost(roomId) ||
+          (isMember(roomId) && resource.data.creatorId == request.auth.uid);
       }
 
       match /picks/{pickId} {

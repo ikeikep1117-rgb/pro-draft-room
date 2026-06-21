@@ -1,7 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-auth.js";
 import {
-  getFirestore, collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc,
+  getFirestore, collection, doc, addDoc, setDoc, getDoc, getDocs, updateDoc, deleteDoc,
   onSnapshot, query, orderBy, serverTimestamp, runTransaction, writeBatch,
 } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
@@ -11,7 +11,7 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 const state = {
   user: null, roomId: null, room: null, members: [], players: [], picks: [],
   nominations: [], filter: "all", search: "", manualConflict: new Set(), unsubs: [],
-  announcementTimer: null, revealDelayTimer: null, renderedAnnouncement: "",
+  announcementTimer: null, revealDelayTimer: null, renderedAnnouncement: "", editingPlayerId: null,
 };
 
 const configured = !Object.values(firebaseConfig).some((value) => String(value).includes("YOUR_"));
@@ -253,6 +253,7 @@ function renderStatus() {
 function renderPlayers() {
   if (!state.room) return;
   const pickedIds = new Set(state.picks.map((pick) => pick.playerId));
+  const nominatedIds = new Set(state.nominations.map((nomination) => nomination.playerId));
   const myNomination = state.nominations.find((item) => item.round === state.room.round && item.memberId === state.user?.uid);
   const canPick = state.room.status === "drafting" && (
     state.room.draftMode === "simultaneous" || currentTurnMember()?.id === state.user?.uid
@@ -266,13 +267,23 @@ function renderPlayers() {
   $("#players-list").innerHTML = visible.map((player) => {
     const picked = pickedIds.has(player.id);
     const nominated = myNomination?.playerId === player.id;
+    const canManage = isHost() || player.creatorId === state.user?.uid;
+    const managementLocked = picked || nominatedIds.has(player.id);
     return `<article class="player-card ${picked ? "picked" : ""} ${nominated ? "nominated" : ""}">
       <div class="position-badge">${escapeHtml(player.position || "—")}</div>
       <div><h4>${escapeHtml(player.name)}</h4><p>${escapeHtml(player.team || "所属未設定")}</p></div>
-      <button class="pick-button" data-pick="${player.id}" ${picked || !canPick ? "disabled" : ""}>${picked ? "指名済" : nominated ? "指名中" : "指名"}</button>
+      <div class="player-actions">
+        <button class="pick-button" data-pick="${player.id}" ${picked || !canPick ? "disabled" : ""}>${picked ? "指名済" : nominated ? "指名中" : "指名"}</button>
+        ${canManage ? `<div class="manage-actions">
+          <button class="manage-button" data-edit-player="${player.id}" ${managementLocked ? "disabled" : ""} title="選手情報を編集">編集</button>
+          <button class="manage-button danger" data-delete-player="${player.id}" ${managementLocked ? "disabled" : ""} title="選手を削除">削除</button>
+        </div>` : ""}
+      </div>
     </article>`;
   }).join("");
   $$("[data-pick]").forEach((button) => button.addEventListener("click", () => nominatePlayer(button.dataset.pick)));
+  $$("[data-edit-player]").forEach((button) => button.addEventListener("click", () => openPlayerEditor(button.dataset.editPlayer)));
+  $$("[data-delete-player]").forEach((button) => button.addEventListener("click", () => deletePlayer(button.dataset.deletePlayer)));
 }
 
 function renderResults() {
@@ -295,21 +306,68 @@ $$(".filter").forEach((button) => button.addEventListener("click", () => {
   renderPlayers();
 }));
 $("#player-search").addEventListener("input", (event) => { state.search = event.target.value; renderPlayers(); });
-$("#add-player-open").addEventListener("click", () => $("#player-dialog").showModal());
+$("#add-player-open").addEventListener("click", () => {
+  state.editingPlayerId = null;
+  $("#player-dialog-title").textContent = "候補選手を追加";
+  $("#player-submit").textContent = "選手を登録する";
+  $("#player-form").reset();
+  $("#player-dialog").showModal();
+});
+
+function openPlayerEditor(playerId) {
+  const player = state.players.find((item) => item.id === playerId);
+  if (!player) return;
+  state.editingPlayerId = playerId;
+  $("#player-dialog-title").textContent = "候補選手を編集";
+  $("#player-submit").textContent = "変更を保存する";
+  $("#new-player-name").value = player.name;
+  $("#new-player-position").value = player.position || "投手";
+  $("#new-player-team").value = player.team || "";
+  $("#player-dialog").showModal();
+}
+
+async function deletePlayer(playerId) {
+  const player = state.players.find((item) => item.id === playerId);
+  if (!player || !confirm(`「${player.name}」を候補一覧から削除しますか？`)) return;
+  try {
+    await deleteDoc(doc(db, "rooms", state.roomId, "players", playerId));
+    toast("候補選手を削除しました。");
+  } catch (error) {
+    showError(error);
+  }
+}
 
 $("#player-form").addEventListener("submit", async (event) => {
   if (event.submitter?.value === "cancel") return;
   event.preventDefault();
   const name = $("#new-player-name").value.trim();
   if (!name) return;
-  if (state.players.some((player) => normalizeName(player.name) === normalizeName(name))) return toast("同名の選手がすでに登録されています。");
-  await addDoc(collection(db, "rooms", state.roomId, "players"), {
+  if (state.players.some((player) => player.id !== state.editingPlayerId && normalizeName(player.name) === normalizeName(name))) {
+    return toast("同名の選手がすでに登録されています。");
+  }
+  const values = {
     name, normalizedName: normalizeName(name), position: $("#new-player-position").value,
-    team: $("#new-player-team").value.trim(), createdAt: serverTimestamp(),
-  });
+    team: $("#new-player-team").value.trim(),
+  };
+  if (state.editingPlayerId) {
+    await updateDoc(doc(db, "rooms", state.roomId, "players", state.editingPlayerId), {
+      ...values, updatedAt: serverTimestamp(),
+    });
+  } else {
+    await addDoc(collection(db, "rooms", state.roomId, "players"), {
+      ...values, creatorId: state.user.uid, createdAt: serverTimestamp(),
+    });
+  }
+  const edited = Boolean(state.editingPlayerId);
+  state.editingPlayerId = null;
   event.target.reset();
   $("#player-dialog").close();
-  toast("候補選手を追加しました。");
+  toast(edited ? "選手情報を更新しました。" : "候補選手を追加しました。");
+});
+
+$("#player-dialog").addEventListener("close", () => {
+  state.editingPlayerId = null;
+  $("#player-form").reset();
 });
 
 $("#start-draft").addEventListener("click", async () => {
