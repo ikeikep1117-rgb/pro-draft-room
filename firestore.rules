@@ -1,0 +1,55 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function room(roomId) {
+      return get(/databases/$(database)/documents/rooms/$(roomId));
+    }
+
+    function isMember(roomId) {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/rooms/$(roomId)/members/$(request.auth.uid));
+    }
+
+    function isHost(roomId) {
+      return signedIn() && room(roomId).data.hostId == request.auth.uid;
+    }
+
+    match /rooms/{roomId} {
+      allow create: if signedIn() && request.resource.data.hostId == request.auth.uid;
+      allow read: if signedIn();
+      allow update, delete: if isHost(roomId);
+      allow update: if isMember(roomId) &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['turnIndex', 'round']);
+
+      match /members/{memberId} {
+        allow read: if signedIn();
+        allow create, update: if signedIn() && memberId == request.auth.uid;
+        allow delete: if memberId == request.auth.uid || isHost(roomId);
+      }
+
+      match /players/{playerId} {
+        allow read, create: if isMember(roomId);
+        allow update, delete: if isHost(roomId);
+      }
+
+      match /picks/{pickId} {
+        allow read: if isMember(roomId);
+        allow create: if isMember(roomId);
+        allow update, delete: if isHost(roomId);
+      }
+
+      match /nominations/{nominationId} {
+        allow read: if isMember(roomId);
+        allow create, update: if isMember(roomId) &&
+          request.resource.data.memberId == request.auth.uid;
+        allow delete: if isHost(roomId);
+      }
+    }
+  }
+}
