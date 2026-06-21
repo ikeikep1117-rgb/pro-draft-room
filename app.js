@@ -11,7 +11,7 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 const state = {
   user: null, roomId: null, room: null, members: [], players: [], picks: [],
   nominations: [], filter: "all", search: "", manualConflict: new Set(), unsubs: [],
-  announcementTimer: null, renderedAnnouncement: "",
+  announcementTimer: null, revealDelayTimer: null, renderedAnnouncement: "",
 };
 
 const configured = !Object.values(firebaseConfig).some((value) => String(value).includes("YOUR_"));
@@ -70,6 +70,7 @@ function cleanupListeners() {
   state.unsubs.forEach((unsub) => unsub());
   state.unsubs = [];
   clearTimeout(state.announcementTimer);
+  clearTimeout(state.revealDelayTimer);
 }
 
 async function restoreSession() {
@@ -115,6 +116,7 @@ $("#create-form").addEventListener("submit", async (event) => {
       turnIndex: 0,
       draftOrder: [],
       announcement: null,
+      revealedPickIds: [],
       createdAt: serverTimestamp(),
     });
     await setDoc(doc(db, "rooms", room.id, "members", state.user.uid), {
@@ -274,19 +276,17 @@ function renderPlayers() {
 }
 
 function renderResults() {
-  $("#empty-results").classList.toggle("hidden", state.picks.length > 0 || state.nominations.length > 0);
-  const review = state.room?.draftMode === "simultaneous" && isHost()
-    ? state.nominations.filter((item) => item.round === state.room.round).map((nomination) => `
-      <article class="result nomination"><div class="result-top"><span>ROUND ${String(nomination.round).padStart(2, "0")}</span><span>SECRET PICK</span></div>
-      <h4>${escapeHtml(nomination.playerName)}</h4><p>${escapeHtml(nomination.memberName)}</p>
-      ${state.room.conflictMode === "host-review" ? `<label class="conflict-check"><input type="checkbox" data-conflict="${nomination.id}" ${state.manualConflict.has(nomination.id) ? "checked" : ""}>同一選手として抽選対象にする</label>` : ""}
-      </article>`).join("") : "";
-  const picks = state.picks.map((pick) => `
+  const revealedIds = new Set(state.room?.revealedPickIds || []);
+  const visiblePicks = state.picks.filter((pick) => revealedIds.has(pick.playerId));
+  const locked = visiblePicks.length === 0;
+  $("#results-panel").classList.toggle("locked", locked);
+  $("#empty-results").classList.toggle("hidden", !locked);
+  $("#results-message").textContent = state.room?.announcement?.status === "active"
+    ? "ただいま発表中です"
+    : "全員の発表終了後に公開されます";
+  const picks = visiblePicks.map((pick) => `
     <article class="result ${pick.viaLottery ? "lottery" : ""}"><div class="result-top"><span>ROUND ${String(pick.round).padStart(2, "0")}</span><span>${pick.viaLottery ? "LOTTERY" : "PICK"}</span></div><h4>${escapeHtml(pick.playerName)}</h4><p>${escapeHtml(pick.memberName)}</p></article>`).join("");
-  $("#results-list").innerHTML = review + picks;
-  $$("[data-conflict]").forEach((checkbox) => checkbox.addEventListener("change", () => {
-    checkbox.checked ? state.manualConflict.add(checkbox.dataset.conflict) : state.manualConflict.delete(checkbox.dataset.conflict);
-  }));
+  $("#results-list").innerHTML = picks;
 }
 
 $$(".filter").forEach((button) => button.addEventListener("click", () => {
@@ -317,7 +317,7 @@ $("#start-draft").addEventListener("click", async () => {
   if (!state.players.length) return toast("候補選手を1人以上追加してください。");
   await updateDoc(roomRef(), {
     status: "drafting", round: 1, turnIndex: 0,
-    draftOrder: state.members.map((member) => member.id), announcement: null,
+    draftOrder: state.members.map((member) => member.id), announcement: null, revealedPickIds: [],
   });
 });
 
@@ -366,9 +366,7 @@ async function resolveSimultaneousRound() {
     (acc[nomination.normalizedName] ||= []).push(nomination);
     return acc;
   }, {}));
-  const manuallySelected = nominations.filter((item) => state.manualConflict.has(item.id));
-  if (state.room.conflictMode === "host-review" && state.manualConflict.size === 1) return toast("抽選対象を2つ以上選択してください。");
-  const conflict = manuallySelected.length > 1 ? manuallySelected : groups.find((group) => group.length > 1);
+  const conflict = groups.find((group) => group.length > 1);
   if (conflict) {
     await updateDoc(roomRef(), {
       lottery: {
@@ -479,6 +477,7 @@ async function finalizeRound(nominations, lottery = null) {
 function renderAnnouncement() {
   const announcement = state.room?.announcement;
   clearTimeout(state.announcementTimer);
+  clearTimeout(state.revealDelayTimer);
   if (!announcement || announcement.status !== "active" || !announcement.items?.length) {
     $("#reveal-screen").classList.add("hidden");
     state.renderedAnnouncement = "";
@@ -488,8 +487,10 @@ function renderAnnouncement() {
   const item = announcement.items[index];
   const key = `${announcement.id}_${index}`;
   $("#reveal-screen").classList.remove("hidden");
+  $("#reveal-curtain").classList.remove("is-revealed");
   $("#reveal-round").textContent = `${state.room.name} — ROUND ${String(announcement.round).padStart(2, "0")}`;
   $("#reveal-order").textContent = `第${index + 1}巡選択希望選手`;
+  $("#reveal-prelude-text").textContent = `第${index + 1}巡選択希望選手`;
   $("#reveal-team").textContent = item.memberName;
   $("#reveal-seal").textContent = item.memberName.slice(0, 1);
   $("#reveal-player").textContent = item.playerName;
@@ -504,18 +505,28 @@ function renderAnnouncement() {
     bar.classList.remove("running");
     void curtain.offsetWidth;
     curtain.style.animation = "";
-    bar.classList.add("running");
+    state.revealDelayTimer = setTimeout(() => {
+      curtain.classList.add("is-revealed");
+      bar.classList.add("running");
+    }, 2400);
   }
-  if (isHost()) state.announcementTimer = setTimeout(() => advanceAnnouncement(announcement.id, index), 6000);
+  if (isHost()) state.announcementTimer = setTimeout(() => advanceAnnouncement(announcement.id, index), 9400);
 }
 
 async function advanceAnnouncement(id = state.room?.announcement?.id, index = state.room?.announcement?.index || 0) {
   const current = state.room?.announcement;
   if (!isHost() || !current || current.id !== id || current.index !== index) return;
   const done = index + 1 >= current.items.length;
-  await updateDoc(roomRef(), {
+  const updates = {
     announcement: { ...current, status: done ? "done" : "active", index: done ? index : index + 1, changedAt: Date.now() },
-  });
+  };
+  if (done) {
+    updates.revealedPickIds = [...new Set([
+      ...(state.room.revealedPickIds || []),
+      ...current.items.map((item) => item.playerId),
+    ])];
+  }
+  await updateDoc(roomRef(), updates);
 }
 
 $("#skip-reveal").addEventListener("click", () => advanceAnnouncement());
@@ -527,7 +538,7 @@ $("#reset-draft").addEventListener("click", async () => {
   const nominations = await getDocs(collection(db, "rooms", state.roomId, "nominations"));
   picks.forEach((item) => batch.delete(item.ref));
   nominations.forEach((item) => batch.delete(item.ref));
-  batch.update(roomRef(), { status: "waiting", round: 1, turnIndex: 0, draftOrder: [], lottery: null, announcement: null });
+  batch.update(roomRef(), { status: "waiting", round: 1, turnIndex: 0, draftOrder: [], lottery: null, announcement: null, revealedPickIds: [] });
   await batch.commit();
 });
 

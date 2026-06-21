@@ -40,7 +40,7 @@
           <label>ドラフト会議名<input id="room-name" maxlength="30" placeholder="例：2026年 第1回ドラフト" required></label>
           <div class="form-grid">
             <label>指名方式<select id="draft-mode"><option value="sequential">順番に指名</option><option value="simultaneous">全員同時に指名</option></select></label>
-            <label>競合時の処理<select id="conflict-mode"><option value="lottery">その場で自動抽選</option><option value="host-review">主催者が目視判定</option></select></label>
+            <label>競合時の処理<select id="conflict-mode"><option value="lottery">その場で自動抽選</option><option value="host-review">締切後に重複チェック</option></select></label>
           </div>
           <button class="primary-button" type="submit"><span>ドラフト会議を開く</span><b>→</b></button>
         </form>
@@ -95,10 +95,10 @@
         <div id="empty-players" class="empty-state hidden"><span>◇</span><h4>候補選手がまだ登録されていません</h4><p>「選手追加」から候補選手を登録してください。</p></div>
       </section>
 
-      <aside class="results-panel panel">
+      <aside id="results-panel" class="results-panel panel locked">
         <div class="panel-heading"><div><p>DRAFTED</p><h3>指名結果</h3></div></div>
         <div id="results-list" class="results-list"></div>
-        <div id="empty-results" class="empty-state compact"><span>☆</span><p>指名結果がここに表示されます</p></div>
+        <div id="empty-results" class="empty-state compact"><span>◆</span><p id="results-message">全員の発表終了後に公開されます</p></div>
       </aside>
     </div>
   </main>
@@ -108,15 +108,23 @@
       <div class="broadcast-top"><span id="reveal-round">2026 DRAFT — ROUND 01</span><span class="on-air"><i></i> LIVE</span></div>
       <div id="reveal-curtain" class="reveal-curtain">
         <div class="reveal-beam"></div>
-        <p class="reveal-kicker">THE SELECTION IS IN</p>
-        <div class="team-seal" id="reveal-seal">D</div>
-        <p class="reveal-order" id="reveal-order">第1巡選択希望選手</p>
-        <h2 id="reveal-team">チーム名</h2>
-        <div class="reveal-divider"><span></span><b>SELECTS</b><span></span></div>
-        <h1 id="reveal-player">選手名</h1>
-        <p id="reveal-meta">所属・ポジション</p>
-        <div class="reveal-progress"><i id="reveal-progress-bar"></i></div>
-        <p class="reveal-count" id="reveal-count">01 / 12</p>
+        <div class="reveal-prelude">
+          <p>THE PICK IS IN</p>
+          <div class="prelude-lines"><i></i><b></b><i></i></div>
+          <h2 id="reveal-prelude-text">第1巡選択希望選手</h2>
+          <span>まもなく発表</span>
+        </div>
+        <div class="reveal-details">
+          <p class="reveal-kicker">THE SELECTION IS IN</p>
+          <div class="team-seal" id="reveal-seal">D</div>
+          <p class="reveal-order" id="reveal-order">第1巡選択希望選手</p>
+          <h2 id="reveal-team">チーム名</h2>
+          <div class="reveal-divider"><span></span><b>SELECTS</b><span></span></div>
+          <h1 id="reveal-player">選手名</h1>
+          <p id="reveal-meta">所属・ポジション</p>
+          <div class="reveal-progress"><i id="reveal-progress-bar"></i></div>
+          <p class="reveal-count" id="reveal-count">01 / 12</p>
+        </div>
       </div>
       <button id="skip-reveal" class="reveal-skip host-only hidden" type="button">次の指名へ ›</button>
     </div>
