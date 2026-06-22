@@ -6,7 +6,8 @@ import {
 } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 import { selectDefaultPlayers } from "./default-players.js";
-import { MLB_ACTIVE_2026, NPB_STAFF_2026 } from "./preset-templates.js";
+import { NPB_STAFF_2026 } from "./preset-templates.js";
+import { MLB_JAPANESE_2026 } from "./mlb-japanese.js";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -14,7 +15,7 @@ const state = {
   user: null, roomId: null, room: null, members: [], players: [], picks: [],
   myNomination: null, lotteryChoices: [], unsubs: [], filter: "all", search: "",
   editingPlayerId: null, historyMemberId: null, announcementTimer: null,
-  revealDelayTimer: null, renderedAnnouncement: "",
+  revealDelayTimer: null, renderedAnnouncement: "", targetIds: new Set(),
 };
 let db;
 let auth;
@@ -90,7 +91,7 @@ function getSelectedTemplatePlayers() {
   const groups = selected.flatMap((id) => {
     if (id === "npb-all") return selectDefaultPlayers("all");
     if (id === "central" || id === "pacific") return selectDefaultPlayers(id);
-    if (id === "mlb") return MLB_ACTIVE_2026;
+    if (id === "mlb") return MLB_JAPANESE_2026;
     if (id === "npb-staff") return NPB_STAFF_2026;
     return customTemplates.find((template) => template.id === id)?.players || [];
   });
@@ -233,6 +234,11 @@ $("#join-form").addEventListener("submit", async (event) => {
 function enterRoom(roomId) {
   cleanupListeners();
   state.roomId = roomId;
+  try {
+    state.targetIds = new Set(JSON.parse(localStorage.getItem(`draft-room-targets:${roomId}:${state.user.uid}`) || "[]"));
+  } catch {
+    state.targetIds = new Set();
+  }
   localStorage.setItem("draft-room-session", JSON.stringify({ roomId, userId: state.user.uid }));
   $("#landing").classList.add("hidden");
   $("#room").classList.remove("hidden");
@@ -278,7 +284,7 @@ function enterRoom(roomId) {
 function leaveRoom() {
   cleanupListeners();
   localStorage.removeItem("draft-room-session");
-  Object.assign(state, { roomId: null, room: null, members: [], players: [], picks: [], myNomination: null, lotteryChoices: [] });
+  Object.assign(state, { roomId: null, room: null, members: [], players: [], picks: [], myNomination: null, lotteryChoices: [], targetIds: new Set() });
   $("#reveal-screen").classList.add("hidden");
   $("#final-results").classList.add("hidden");
   $("#room").classList.add("hidden");
@@ -370,7 +376,7 @@ function renderPlayers() {
     state.room.draftMode === "simultaneous" ? activeMembers().some((m) => m.id === state.user?.uid) : currentTurnMember()?.id === state.user?.uid
   );
   const visible = state.players
-    .filter((p) => (state.filter === "all" || p.position === state.filter || (state.filter === "staff" && ["監督", "コーチ"].includes(p.position))) && `${p.name} ${p.team || ""} ${p.role || ""}`.toLowerCase().includes(state.search.toLowerCase()))
+    .filter((p) => (state.filter === "all" || p.position === state.filter || (state.filter === "staff" && ["監督", "コーチ"].includes(p.position)) || (state.filter === "target" && state.targetIds.has(p.id))) && `${p.name} ${p.team || ""} ${p.role || ""}`.toLowerCase().includes(state.search.toLowerCase()))
     .sort((a, b) =>
       Number(selected.has(a.id)) - Number(selected.has(b.id))
       || (a.teamOrder ?? 999) - (b.teamOrder ?? 999)
@@ -378,21 +384,36 @@ function renderPlayers() {
       || String(b.uniformNumber || "").length - String(a.uniformNumber || "").length
       || String(a.name).localeCompare(String(b.name), "ja")
     );
-  $("#empty-players").classList.toggle("hidden", state.players.length > 0);
+  $("#empty-players").classList.toggle("hidden", visible.length > 0);
+  $("#empty-players").innerHTML = state.filter === "target"
+    ? "<span>☆</span><h4>狙っている選手はまだいません</h4><p>選手カードの「☆ 狙う」を押すと、ここに追加されます。</p>"
+    : state.players.length
+      ? "<span>⌕</span><h4>条件に合う選手が見つかりません</h4><p>検索語やポジションを変更してください。</p>"
+      : "<span>◇</span><h4>候補選手がまだ登録されていません</h4><p>「選手追加」から候補選手を登録してください。</p>";
   $("#players-list").innerHTML = visible.map((p) => {
     const picked = selected.has(p.id);
     const nominated = mine?.playerId === p.id;
+    const targeted = state.targetIds.has(p.id);
     const canManage = isHost() || p.creatorId === state.user?.uid;
-    return `<article class="player-card ${picked ? "picked" : ""} ${nominated ? "nominated" : ""}">
+    return `<article class="player-card ${picked ? "picked" : ""} ${nominated ? "nominated" : ""} ${targeted ? "targeted" : ""}">
       <div class="position-badge">${escapeHtml(p.position || "—")}</div>
-      <div><h4>${escapeHtml(p.name)}</h4><p>${p.uniformNumber ? `#${escapeHtml(p.uniformNumber)}　` : ""}${escapeHtml(p.team || "所属未設定")}${p.role ? `・${escapeHtml(p.role)}` : ""}</p></div>
+      <div><h4>${escapeHtml(p.name)}</h4><p>${p.uniformNumber ? `#${escapeHtml(p.uniformNumber)}　` : ""}${escapeHtml(p.team || "所属未設定")}</p></div>
       <div class="player-actions"><button class="pick-button" data-pick="${p.id}" ${picked || !canPick ? "disabled" : ""}>${picked ? "指名済" : nominated ? "変更" : "指名"}</button>
+      <button class="target-button ${targeted ? "active" : ""}" data-target-player="${p.id}" type="button">${targeted ? "★ 狙い中" : "☆ 狙う"}</button>
       ${canManage ? `<div class="manage-actions"><button class="manage-button" data-edit-player="${p.id}" ${picked ? "disabled" : ""}>編集</button><button class="manage-button danger" data-delete-player="${p.id}" ${picked ? "disabled" : ""}>削除</button></div>` : ""}</div>
     </article>`;
   }).join("");
   $$("[data-pick]").forEach((b) => b.addEventListener("click", () => nominatePlayer(b.dataset.pick)));
+  $$("[data-target-player]").forEach((b) => b.addEventListener("click", () => toggleTargetPlayer(b.dataset.targetPlayer)));
   $$("[data-edit-player]").forEach((b) => b.addEventListener("click", () => openPlayerEditor(b.dataset.editPlayer)));
   $$("[data-delete-player]").forEach((b) => b.addEventListener("click", () => deletePlayer(b.dataset.deletePlayer)));
+}
+
+function toggleTargetPlayer(playerId) {
+  if (state.targetIds.has(playerId)) state.targetIds.delete(playerId);
+  else state.targetIds.add(playerId);
+  localStorage.setItem(`draft-room-targets:${state.roomId}:${state.user.uid}`, JSON.stringify([...state.targetIds]));
+  renderPlayers();
 }
 
 function renderHistory() {
