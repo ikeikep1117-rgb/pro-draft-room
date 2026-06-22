@@ -5,6 +5,7 @@ import {
   onSnapshot, query, orderBy, serverTimestamp, runTransaction, writeBatch,
 } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
+import { selectDefaultPlayers } from "./default-players.js";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -74,6 +75,24 @@ function cleanupListeners() {
   clearTimeout(state.revealDelayTimer);
 }
 
+async function addDefaultPlayers(roomId, scope) {
+  const players = selectDefaultPlayers(scope);
+  const chunkSize = 400;
+  for (let start = 0; start < players.length; start += chunkSize) {
+    const batch = writeBatch(db);
+    players.slice(start, start + chunkSize).forEach((player) => {
+      batch.set(doc(collection(db, "rooms", roomId, "players")), {
+        ...player,
+        normalizedName: normalizeName(player.name),
+        creatorId: state.user.uid,
+        createdAt: serverTimestamp(),
+      });
+    });
+    await batch.commit();
+  }
+  return players.length;
+}
+
 async function restoreSession() {
   const saved = JSON.parse(localStorage.getItem("draft-room-session") || "null");
   if (!saved || !state.user || saved.userId !== state.user.uid) return;
@@ -93,13 +112,17 @@ $("#create-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!configured || !state.user) return toast("Firebaseへの接続を確認してください。");
   event.submitter.disabled = true;
+  const buttonLabel = event.submitter.querySelector("span");
+  const originalLabel = buttonLabel.textContent;
   try {
+    buttonLabel.textContent = "部屋を準備しています";
     const rooms = await getDocs(collection(db, "rooms"));
     let code;
     do code = makeCode(); while (rooms.docs.some((d) => d.data().code === code));
     const room = await addDoc(collection(db, "rooms"), {
       code, name: $("#room-name").value.trim(), hostId: state.user.uid, status: "waiting",
       phase: "waiting", draftMode: $("#draft-mode").value, conflictMode: $("#conflict-mode").value,
+      defaultPlayerScope: document.querySelector('input[name="default-player-scope"]:checked')?.value || "all",
       round: 1, attempt: 1, turnIndex: 0, draftOrder: [], eligibleMemberIds: [],
       announcement: null, revealedPickIds: [], lottery: null, lotteryQueue: [], lotteryIndex: 0,
       lotteryLosers: [], createdAt: serverTimestamp(),
@@ -108,9 +131,18 @@ $("#create-form").addEventListener("submit", async (event) => {
       name: $("#create-name").value.trim(), joinedAt: serverTimestamp(), order: 0, isHost: true,
       finished: false, hasSubmitted: false,
     });
+    const scope = document.querySelector('input[name="default-player-scope"]:checked')?.value || "all";
+    if (scope !== "none") {
+      buttonLabel.textContent = "選手名簿を登録しています";
+      const count = await addDefaultPlayers(room.id, scope);
+      toast(`${count}名の選手を追加しました。`);
+    }
     enterRoom(room.id);
   } catch (error) { showError(error); }
-  finally { event.submitter.disabled = false; }
+  finally {
+    event.submitter.disabled = false;
+    buttonLabel.textContent = originalLabel;
+  }
 });
 
 $("#join-form").addEventListener("submit", async (event) => {
@@ -272,7 +304,13 @@ function renderPlayers() {
   );
   const visible = state.players
     .filter((p) => (state.filter === "all" || p.position === state.filter) && `${p.name} ${p.team || ""}`.toLowerCase().includes(state.search.toLowerCase()))
-    .sort((a, b) => Number(selected.has(a.id)) - Number(selected.has(b.id)) || String(a.name).localeCompare(String(b.name), "ja"));
+    .sort((a, b) =>
+      Number(selected.has(a.id)) - Number(selected.has(b.id))
+      || (a.teamOrder ?? 999) - (b.teamOrder ?? 999)
+      || (a.uniformSort ?? 9999) - (b.uniformSort ?? 9999)
+      || String(b.uniformNumber || "").length - String(a.uniformNumber || "").length
+      || String(a.name).localeCompare(String(b.name), "ja")
+    );
   $("#empty-players").classList.toggle("hidden", state.players.length > 0);
   $("#players-list").innerHTML = visible.map((p) => {
     const picked = selected.has(p.id);
@@ -280,7 +318,7 @@ function renderPlayers() {
     const canManage = isHost() || p.creatorId === state.user?.uid;
     return `<article class="player-card ${picked ? "picked" : ""} ${nominated ? "nominated" : ""}">
       <div class="position-badge">${escapeHtml(p.position || "—")}</div>
-      <div><h4>${escapeHtml(p.name)}</h4><p>${escapeHtml(p.team || "所属未設定")}</p></div>
+      <div><h4>${escapeHtml(p.name)}</h4><p>${p.uniformNumber !== undefined ? `#${escapeHtml(p.uniformNumber)}　` : ""}${escapeHtml(p.team || "所属未設定")}</p></div>
       <div class="player-actions"><button class="pick-button" data-pick="${p.id}" ${picked || !canPick ? "disabled" : ""}>${picked ? "指名済" : nominated ? "変更" : "指名"}</button>
       ${canManage ? `<div class="manage-actions"><button class="manage-button" data-edit-player="${p.id}" ${picked ? "disabled" : ""}>編集</button><button class="manage-button danger" data-delete-player="${p.id}" ${picked ? "disabled" : ""}>削除</button></div>` : ""}</div>
     </article>`;

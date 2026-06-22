@@ -42,6 +42,16 @@
             <label>指名方式<select id="draft-mode"><option value="simultaneous">NPB方式（全員同時）</option><option value="sequential">順番に指名</option></select></label>
             <label>競合時の処理<select id="conflict-mode"><option value="lottery">締切後に封筒抽選</option><option value="host-review">締切後に重複チェック</option></select></label>
           </div>
+          <fieldset class="default-player-field">
+            <legend>初期選手データ</legend>
+            <div class="choice-tabs">
+              <label><input type="radio" name="default-player-scope" value="all" checked><span>12球団</span></label>
+              <label><input type="radio" name="default-player-scope" value="central"><span>セ・リーグ</span></label>
+              <label><input type="radio" name="default-player-scope" value="pacific"><span>パ・リーグ</span></label>
+              <label><input type="radio" name="default-player-scope" value="none"><span>追加しない</span></label>
+            </div>
+            <p>2026年度の支配下選手を、球団順・背番号順で追加します。育成選手は含みません。</p>
+          </fieldset>
           <button class="primary-button" type="submit"><span>ドラフト会議を開く</span><b>→</b></button>
         </form>
         <form id="join-form" class="entry-form">
