@@ -39,8 +39,8 @@
           <label>あなたのチーム名<input id="create-name" maxlength="20" placeholder="例：東京イーグルス" required></label>
           <label>ドラフト会議名<input id="room-name" maxlength="30" placeholder="例：2026年 第1回ドラフト" required></label>
           <div class="form-grid">
-            <label>指名方式<select id="draft-mode"><option value="sequential">順番に指名</option><option value="simultaneous">全員同時に指名</option></select></label>
-            <label>競合時の処理<select id="conflict-mode"><option value="lottery">その場で自動抽選</option><option value="host-review">締切後に重複チェック</option></select></label>
+            <label>指名方式<select id="draft-mode"><option value="simultaneous">NPB方式（全員同時）</option><option value="sequential">順番に指名</option></select></label>
+            <label>競合時の処理<select id="conflict-mode"><option value="lottery">締切後に封筒抽選</option><option value="host-review">締切後に重複チェック</option></select></label>
           </div>
           <button class="primary-button" type="submit"><span>ドラフト会議を開く</span><b>→</b></button>
         </form>
@@ -69,8 +69,11 @@
       <div class="status-actions">
         <button id="start-draft" class="gold-button host-only hidden" type="button">ドラフト開始</button>
         <button id="next-round" class="gold-button host-only hidden" type="button">指名を締め切る</button>
+        <button id="finish-draft" class="ghost-button hidden" type="button">指名終了</button>
+        <button id="history-toggle" class="ghost-button hidden" type="button">指名履歴</button>
         <button id="reset-draft" class="ghost-button host-only hidden" type="button">リセット</button>
       </div>
+      <div id="progress-details" class="progress-details hidden"></div>
     </section>
 
     <div class="room-layout">
@@ -95,8 +98,9 @@
         <div id="empty-players" class="empty-state hidden"><span>◇</span><h4>候補選手がまだ登録されていません</h4><p>「選手追加」から候補選手を登録してください。</p></div>
       </section>
 
-      <aside id="results-panel" class="results-panel panel locked">
-        <div class="panel-heading"><div><p>DRAFTED</p><h3>指名結果</h3></div></div>
+      <aside id="results-panel" class="results-panel panel locked closed">
+        <div class="panel-heading"><div><p>DRAFTED</p><h3>球団別 指名履歴</h3></div><button id="history-close" class="drawer-close" type="button">×</button></div>
+        <div id="history-tabs" class="history-tabs"></div>
         <div id="results-list" class="results-list"></div>
         <div id="empty-results" class="empty-state compact"><span>◆</span><p id="results-message">全員の発表終了後に公開されます</p></div>
       </aside>
@@ -136,15 +140,44 @@
       <label>選手名<input id="new-player-name" maxlength="30" placeholder="例：山田 太郎" required></label>
       <div class="form-grid">
         <label>ポジション<select id="new-player-position"><option>投手</option><option>捕手</option><option>内野手</option><option>外野手</option></select></label>
-        <label>所属・学校<input id="new-player-team" maxlength="30" placeholder="例：北海大学"></label>
+        <label>所属・学校<input id="new-player-team" maxlength="30" list="team-suggestions" placeholder="球団・学校・チームを入力"></label>
       </div>
       <button id="player-submit" class="primary-button" value="default" type="submit">選手を登録する</button>
     </form>
   </dialog>
+  <datalist id="team-suggestions">
+    <option value="福岡ソフトバンクホークス"><option value="北海道日本ハムファイターズ"><option value="オリックス・バファローズ">
+    <option value="東北楽天ゴールデンイーグルス"><option value="埼玉西武ライオンズ"><option value="千葉ロッテマリーンズ">
+    <option value="阪神タイガース"><option value="横浜DeNAベイスターズ"><option value="読売ジャイアンツ">
+    <option value="中日ドラゴンズ"><option value="広島東洋カープ"><option value="東京ヤクルトスワローズ">
+  </datalist>
 
-  <dialog id="lottery-dialog" class="modal lottery-modal">
-    <div><p class="eyebrow">DRAFT LOTTERY</p><h2>競合抽選</h2><div id="lottery-ball" class="lottery-ball">?</div><h3 id="lottery-player">抽選中...</h3><p id="lottery-teams"></p><button id="run-lottery" class="gold-button host-only" type="button">抽選を開始</button><button id="close-lottery" class="ghost-button hidden" type="button">結果を確定</button></div>
+  <dialog id="lottery-dialog" class="lottery-modal">
+    <div class="lottery-stage">
+      <div class="lottery-header"><div><p>DRAFT LOTTERY</p><h2 id="lottery-title">競合抽選</h2></div><span id="lottery-step">01 / 01</span></div>
+      <div class="lottery-player-card"><span>競合選手</span><h3 id="lottery-player">選手名</h3><p id="lottery-teams"></p></div>
+      <div id="conflict-list" class="conflict-list"></div>
+      <p id="lottery-guide" class="lottery-guide">各球団は封筒を1つ選択してください</p>
+      <div id="envelope-grid" class="envelope-grid"></div>
+      <div id="lottery-result" class="lottery-result hidden"><p>交渉権獲得球団</p><h2 id="lottery-winner">—</h2><span id="lottery-winning-player"></span></div>
+      <div class="lottery-actions">
+        <button id="run-lottery" class="gold-button host-only hidden" type="button">封筒を一斉開封</button>
+        <button id="close-lottery" class="gold-button host-only hidden" type="button">結果を確定して次へ</button>
+      </div>
+    </div>
   </dialog>
+
+  <main id="final-results" class="final-results hidden">
+    <header class="result-hero"><p>DRAFT COMPLETE</p><h1>最終指名結果</h1><span id="result-room-name"></span></header>
+    <section class="result-summary">
+      <div><b id="result-team-count">0</b><span>参加球団</span></div>
+      <div><b id="result-pick-count">0</b><span>総指名数</span></div>
+      <div><b id="result-round-count">0</b><span>最終巡目</span></div>
+    </section>
+    <section class="result-board-wrap"><div id="result-board" class="result-board"></div></section>
+    <section><div class="result-section-title"><p>TEAM RESULTS</p><h2>チーム別獲得選手</h2></div><div id="team-results" class="team-results"></div></section>
+    <button id="result-back" class="ghost-button" type="button">ドラフトルームに戻る</button>
+  </main>
 
   <script type="module" src="./app.js"></script>
 </body>

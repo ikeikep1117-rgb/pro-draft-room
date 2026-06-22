@@ -25,7 +25,7 @@ service cloud.firestore {
       allow update, delete: if isHost(roomId);
       allow update: if isMember(roomId) &&
         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['turnIndex', 'round', 'announcement']);
+          .hasOnly(['turnIndex', 'round', 'announcement', 'phase']);
 
       match /members/{memberId} {
         allow read: if signedIn();
@@ -52,6 +52,15 @@ service cloud.firestore {
       }
 
       match /nominations/{nominationId} {
+        allow read: if isMember(roomId) &&
+          (nominationId == request.auth.uid || room(roomId).data.phase != 'nomination');
+        allow create, update: if isMember(roomId) &&
+          nominationId == request.auth.uid &&
+          request.resource.data.memberId == request.auth.uid;
+        allow delete: if isHost(roomId) || nominationId == request.auth.uid;
+      }
+
+      match /lotteryChoices/{choiceId} {
         allow read: if isMember(roomId);
         allow create, update: if isMember(roomId) &&
           request.resource.data.memberId == request.auth.uid;
