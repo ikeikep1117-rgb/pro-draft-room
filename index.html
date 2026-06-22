@@ -34,6 +34,7 @@
         <div class="entry-tabs" role="tablist">
           <button class="tab active" data-tab="create" type="button">部屋をつくる</button>
           <button class="tab" data-tab="join" type="button">参加する</button>
+          <button class="tab" data-tab="template" type="button">テンプレート作成</button>
         </div>
         <form id="create-form" class="entry-form active">
           <label>あなたのチーム名<input id="create-name" maxlength="20" placeholder="例：東京イーグルス" required></label>
@@ -43,14 +44,16 @@
             <label>競合時の処理<select id="conflict-mode"><option value="lottery">締切後に封筒抽選</option><option value="host-review">締切後に重複チェック</option></select></label>
           </div>
           <fieldset class="default-player-field">
-            <legend>初期選手データ</legend>
-            <div class="choice-tabs">
-              <label><input type="radio" name="default-player-scope" value="all" checked><span>12球団</span></label>
-              <label><input type="radio" name="default-player-scope" value="central"><span>セ・リーグ</span></label>
-              <label><input type="radio" name="default-player-scope" value="pacific"><span>パ・リーグ</span></label>
-              <label><input type="radio" name="default-player-scope" value="none"><span>追加しない</span></label>
+            <legend>選手テンプレート <small>複数選択できます</small></legend>
+            <div id="preset-template-list" class="template-choice-list">
+              <label><input type="checkbox" name="player-template" value="npb-all" checked><span><b>NPB 12球団</b><small>支配下選手 807名</small></span></label>
+              <label><input type="checkbox" name="player-template" value="central"><span><b>セ・リーグ</b><small>支配下選手 404名</small></span></label>
+              <label><input type="checkbox" name="player-template" value="pacific"><span><b>パ・リーグ</b><small>支配下選手 403名</small></span></label>
+              <label><input type="checkbox" name="player-template" value="mlb"><span><b>MLB 現役選手</b><small>30球団 Active Roster</small></span></label>
+              <label><input type="checkbox" name="player-template" value="npb-staff"><span><b>NPB 監督・コーチ</b><small>12球団 一軍・ファーム</small></span></label>
             </div>
-            <p>2026年度の支配下選手を、球団順・背番号順で追加します。育成選手は含みません。</p>
+            <div id="custom-template-choices" class="template-choice-list custom-template-choices"></div>
+            <p>選択なしでも作成できます。重なるテンプレートを選んだ場合、同じ選手は自動で1名にまとめます。</p>
           </fieldset>
           <button class="primary-button" type="submit"><span>ドラフト会議を開く</span><b>→</b></button>
         </form>
@@ -58,6 +61,20 @@
           <label>あなたのチーム名<input id="join-name" maxlength="20" placeholder="例：大阪バファローズ" required></label>
           <label>6桁の参加コード<input id="join-code" class="code-input" maxlength="6" autocomplete="off" placeholder="ABC123" required></label>
           <button class="primary-button" type="submit"><span>ドラフト会議に参加</span><b>→</b></button>
+        </form>
+        <form id="template-form" class="entry-form">
+          <div class="template-editor-head">
+            <p class="eyebrow">MY PLAYER TEMPLATE</p>
+            <h3>独自テンプレートを保存</h3>
+            <p>保存したテンプレートは、この端末で次回からも選択できます。</p>
+          </div>
+          <label>テンプレート名<input id="template-name" maxlength="30" placeholder="例：大学生ドラフト候補" required></label>
+          <label>選手一覧
+            <textarea id="template-players" rows="8" placeholder="1行に1名入力&#10;山田 太郎,内野手,〇〇大学,1&#10;佐藤 一郎,投手,△△高校,18" required></textarea>
+          </label>
+          <p class="template-format">形式：選手名, ポジション, 所属, 背番号　※選手名だけでも保存できます</p>
+          <button class="primary-button" type="submit"><span>テンプレートを保存</span><b>＋</b></button>
+          <div id="saved-template-list" class="saved-template-list"></div>
         </form>
         <p class="setup-note" id="setup-note"></p>
       </div>
@@ -103,6 +120,7 @@
           <button class="filter" data-position="捕手" type="button">捕手</button>
           <button class="filter" data-position="内野手" type="button">内野手</button>
           <button class="filter" data-position="外野手" type="button">外野手</button>
+          <button class="filter" data-position="staff" type="button">監督・コーチ</button>
         </div>
         <div id="players-list" class="players-list"></div>
         <div id="empty-players" class="empty-state hidden"><span>◇</span><h4>候補選手がまだ登録されていません</h4><p>「選手追加」から候補選手を登録してください。</p></div>

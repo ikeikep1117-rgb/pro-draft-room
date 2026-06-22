@@ -6,6 +6,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 import { selectDefaultPlayers } from "./default-players.js";
+import { MLB_ACTIVE_2026, NPB_STAFF_2026 } from "./preset-templates.js";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -17,6 +18,7 @@ const state = {
 };
 let db;
 let auth;
+const customTemplateKey = "draft-room-custom-templates";
 const configured = !Object.values(firebaseConfig).some((v) => String(v).includes("YOUR_"));
 
 if (configured) {
@@ -75,8 +77,31 @@ function cleanupListeners() {
   clearTimeout(state.revealDelayTimer);
 }
 
-async function addDefaultPlayers(roomId, scope) {
-  const players = selectDefaultPlayers(scope);
+function loadCustomTemplates() {
+  try { return JSON.parse(localStorage.getItem(customTemplateKey) || "[]"); }
+  catch { return []; }
+}
+function saveCustomTemplates(templates) {
+  localStorage.setItem(customTemplateKey, JSON.stringify(templates));
+}
+function getSelectedTemplatePlayers() {
+  const selected = $$('input[name="player-template"]:checked').map((input) => input.value);
+  const customTemplates = loadCustomTemplates();
+  const groups = selected.flatMap((id) => {
+    if (id === "npb-all") return selectDefaultPlayers("all");
+    if (id === "central" || id === "pacific") return selectDefaultPlayers(id);
+    if (id === "mlb") return MLB_ACTIVE_2026;
+    if (id === "npb-staff") return NPB_STAFF_2026;
+    return customTemplates.find((template) => template.id === id)?.players || [];
+  });
+  const unique = new Map();
+  groups.forEach((player) => {
+    const key = `${normalizeName(player.name)}:${normalizeName(player.team || "")}`;
+    if (!unique.has(key)) unique.set(key, player);
+  });
+  return [...unique.values()];
+}
+async function addDefaultPlayers(roomId, players) {
   const chunkSize = 400;
   for (let start = 0; start < players.length; start += chunkSize) {
     const batch = writeBatch(db);
@@ -93,6 +118,21 @@ async function addDefaultPlayers(roomId, scope) {
   return players.length;
 }
 
+function renderCustomTemplates() {
+  const templates = loadCustomTemplates();
+  $("#custom-template-choices").innerHTML = templates.map((template) => `
+    <label><input type="checkbox" name="player-template" value="${escapeHtml(template.id)}"><span><b>${escapeHtml(template.name)}</b><small>マイテンプレート ${template.players.length}名</small></span></label>`).join("");
+  $("#saved-template-list").innerHTML = templates.length
+    ? `<h4>保存済みテンプレート</h4>${templates.map((template) => `<article><div><b>${escapeHtml(template.name)}</b><span>${template.players.length}名</span></div><button type="button" data-delete-template="${escapeHtml(template.id)}">削除</button></article>`).join("")}`
+    : "<p>保存済みテンプレートはありません。</p>";
+  $$("[data-delete-template]").forEach((button) => button.addEventListener("click", () => {
+    const next = loadCustomTemplates().filter((template) => template.id !== button.dataset.deleteTemplate);
+    saveCustomTemplates(next);
+    renderCustomTemplates();
+    toast("テンプレートを削除しました。");
+  }));
+}
+
 async function restoreSession() {
   const saved = JSON.parse(localStorage.getItem("draft-room-session") || "null");
   if (!saved || !state.user || saved.userId !== state.user.uid) return;
@@ -105,8 +145,35 @@ $$(".tab").forEach((button) => button.addEventListener("click", () => {
   $$(".tab").forEach((tab) => tab.classList.toggle("active", tab === button));
   $$(".entry-form").forEach((form) => form.classList.toggle("active", form.id.startsWith(button.dataset.tab)));
 }));
+renderCustomTemplates();
 $("#join-code").addEventListener("input", (e) => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""); });
 $("#draft-mode").addEventListener("change", (e) => { $("#conflict-mode").disabled = e.target.value === "sequential"; });
+
+$("#template-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const name = $("#template-name").value.trim();
+  const lines = $("#template-players").value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const players = lines.map((line, index) => {
+    const [playerName, position = "—", team = "", uniformNumber = ""] = line.split(",").map((value) => value.trim());
+    return {
+      name: playerName,
+      position: position || "—",
+      team,
+      uniformNumber,
+      teamOrder: 500,
+      uniformSort: /^\d+$/.test(uniformNumber) ? Number(uniformNumber) : 9000 + index,
+      source: "custom-template",
+    };
+  }).filter((player) => player.name);
+  if (!name || !players.length) return toast("テンプレート名と選手を入力してください。");
+  const templates = loadCustomTemplates();
+  const id = `custom-${Date.now().toString(36)}`;
+  templates.push({ id, name, players, createdAt: new Date().toISOString() });
+  saveCustomTemplates(templates);
+  event.target.reset();
+  renderCustomTemplates();
+  toast(`${players.length}名のテンプレートを保存しました。`);
+});
 
 $("#create-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -122,7 +189,7 @@ $("#create-form").addEventListener("submit", async (event) => {
     const room = await addDoc(collection(db, "rooms"), {
       code, name: $("#room-name").value.trim(), hostId: state.user.uid, status: "waiting",
       phase: "waiting", draftMode: $("#draft-mode").value, conflictMode: $("#conflict-mode").value,
-      defaultPlayerScope: document.querySelector('input[name="default-player-scope"]:checked')?.value || "all",
+      selectedTemplates: $$('input[name="player-template"]:checked').map((input) => input.value),
       round: 1, attempt: 1, turnIndex: 0, draftOrder: [], eligibleMemberIds: [],
       announcement: null, revealedPickIds: [], lottery: null, lotteryQueue: [], lotteryIndex: 0,
       lotteryLosers: [], createdAt: serverTimestamp(),
@@ -131,10 +198,10 @@ $("#create-form").addEventListener("submit", async (event) => {
       name: $("#create-name").value.trim(), joinedAt: serverTimestamp(), order: 0, isHost: true,
       finished: false, hasSubmitted: false,
     });
-    const scope = document.querySelector('input[name="default-player-scope"]:checked')?.value || "all";
-    if (scope !== "none") {
+    const templatePlayers = getSelectedTemplatePlayers();
+    if (templatePlayers.length) {
       buttonLabel.textContent = "選手名簿を登録しています";
-      const count = await addDefaultPlayers(room.id, scope);
+      const count = await addDefaultPlayers(room.id, templatePlayers);
       toast(`${count}名の選手を追加しました。`);
     }
     enterRoom(room.id);
@@ -303,7 +370,7 @@ function renderPlayers() {
     state.room.draftMode === "simultaneous" ? activeMembers().some((m) => m.id === state.user?.uid) : currentTurnMember()?.id === state.user?.uid
   );
   const visible = state.players
-    .filter((p) => (state.filter === "all" || p.position === state.filter) && `${p.name} ${p.team || ""}`.toLowerCase().includes(state.search.toLowerCase()))
+    .filter((p) => (state.filter === "all" || p.position === state.filter || (state.filter === "staff" && ["監督", "コーチ"].includes(p.position))) && `${p.name} ${p.team || ""} ${p.role || ""}`.toLowerCase().includes(state.search.toLowerCase()))
     .sort((a, b) =>
       Number(selected.has(a.id)) - Number(selected.has(b.id))
       || (a.teamOrder ?? 999) - (b.teamOrder ?? 999)
@@ -318,7 +385,7 @@ function renderPlayers() {
     const canManage = isHost() || p.creatorId === state.user?.uid;
     return `<article class="player-card ${picked ? "picked" : ""} ${nominated ? "nominated" : ""}">
       <div class="position-badge">${escapeHtml(p.position || "—")}</div>
-      <div><h4>${escapeHtml(p.name)}</h4><p>${p.uniformNumber !== undefined ? `#${escapeHtml(p.uniformNumber)}　` : ""}${escapeHtml(p.team || "所属未設定")}</p></div>
+      <div><h4>${escapeHtml(p.name)}</h4><p>${p.uniformNumber ? `#${escapeHtml(p.uniformNumber)}　` : ""}${escapeHtml(p.team || "所属未設定")}${p.role ? `・${escapeHtml(p.role)}` : ""}</p></div>
       <div class="player-actions"><button class="pick-button" data-pick="${p.id}" ${picked || !canPick ? "disabled" : ""}>${picked ? "指名済" : nominated ? "変更" : "指名"}</button>
       ${canManage ? `<div class="manage-actions"><button class="manage-button" data-edit-player="${p.id}" ${picked ? "disabled" : ""}>編集</button><button class="manage-button danger" data-delete-player="${p.id}" ${picked ? "disabled" : ""}>削除</button></div>` : ""}</div>
     </article>`;
