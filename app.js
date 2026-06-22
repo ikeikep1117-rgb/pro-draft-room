@@ -141,6 +141,7 @@ function enterRoom(roomId) {
     onSnapshot(roomRef(), (snap) => {
       if (!snap.exists()) return leaveRoom();
       state.room = { id: snap.id, ...snap.data() };
+      if (!state.room.phase) state.room.phase = state.room.status === "waiting" ? "waiting" : "nomination";
       render();
       renderAnnouncement();
       renderLottery();
@@ -291,7 +292,7 @@ function renderPlayers() {
 
 function renderHistory() {
   if (!state.room) return;
-  const revealed = new Set(state.room.revealedPickIds || []);
+  const revealed = new Set(state.room.revealedPickIds ?? state.picks.map((p) => p.playerId));
   const visible = state.picks.filter((p) => revealed.has(p.playerId));
   const locked = visible.length === 0;
   $("#results-panel").classList.toggle("locked", locked);
