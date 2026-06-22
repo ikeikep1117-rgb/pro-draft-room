@@ -20,6 +20,8 @@ const state = {
 let db;
 let auth;
 const customTemplateKey = "draft-room-custom-templates";
+const presetOverrideKey = "draft-room-preset-overrides";
+let editingTemplateId = "new";
 const configured = !Object.values(firebaseConfig).some((v) => String(v).includes("YOUR_"));
 
 if (configured) {
@@ -85,16 +87,55 @@ function loadCustomTemplates() {
 function saveCustomTemplates(templates) {
   localStorage.setItem(customTemplateKey, JSON.stringify(templates));
 }
+function loadPresetOverrides() {
+  try { return JSON.parse(localStorage.getItem(presetOverrideKey) || "{}"); }
+  catch { return {}; }
+}
+function savePresetOverrides(overrides) {
+  localStorage.setItem(presetOverrideKey, JSON.stringify(overrides));
+}
+function defaultPresetPlayers(id) {
+  if (id === "npb-all") return selectDefaultPlayers("all");
+  if (id === "central" || id === "pacific") return selectDefaultPlayers(id);
+  if (id === "mlb") return MLB_JAPANESE_2026;
+  if (id === "npb-staff") return NPB_STAFF_2026;
+  return [];
+}
+function templatePlayers(id) {
+  const override = loadPresetOverrides()[id];
+  if (override) return override.players;
+  const preset = defaultPresetPlayers(id);
+  if (preset.length) return preset;
+  return loadCustomTemplates().find((template) => template.id === id)?.players || [];
+}
+function serializeTemplatePlayers(players) {
+  return players.map((player) => [player.name, player.position || "", player.team || "", player.uniformNumber || ""].join(",")).join("\n");
+}
+function parseTemplatePlayers(text) {
+  const npbTeamOrder = {
+    "阪神タイガース": 1, "横浜DeNAベイスターズ": 2, "読売ジャイアンツ": 3, "中日ドラゴンズ": 4,
+    "広島東洋カープ": 5, "東京ヤクルトスワローズ": 6, "福岡ソフトバンクホークス": 7,
+    "北海道日本ハムファイターズ": 8, "オリックス・バファローズ": 9, "東北楽天ゴールデンイーグルス": 10,
+    "埼玉西武ライオンズ": 11, "千葉ロッテマリーンズ": 12,
+  };
+  return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line, index) => {
+    const [name, position = "—", team = "", uniformNumber = ""] = line.split(",").map((value) => value.trim());
+    return {
+      name,
+      position: position || "—",
+      team,
+      uniformNumber,
+      teamOrder: npbTeamOrder[team] || 500,
+      uniformSort: /^\d+$/.test(uniformNumber) ? Number(uniformNumber) : 9000 + index,
+      source: "edited-template",
+    };
+  }).filter((player) => player.name);
+}
 function getSelectedTemplatePlayers() {
   const selected = $$('input[name="player-template"]:checked').map((input) => input.value);
   const customTemplates = loadCustomTemplates();
   const groups = selected.flatMap((id) => {
-    let players;
-    if (id === "npb-all") players = selectDefaultPlayers("all");
-    else if (id === "central" || id === "pacific") players = selectDefaultPlayers(id);
-    else if (id === "mlb") players = MLB_JAPANESE_2026;
-    else if (id === "npb-staff") players = NPB_STAFF_2026;
-    else players = customTemplates.find((template) => template.id === id)?.players || [];
+    const players = templatePlayers(id);
     return players.map((player) => ({ ...player, templateIds: [id] }));
   });
   const unique = new Map();
@@ -151,17 +192,62 @@ async function addDefaultPlayers(roomId, players) {
 
 function renderCustomTemplates() {
   const templates = loadCustomTemplates();
+  const overrides = loadPresetOverrides();
+  $$('input[name="player-template"]').forEach((input) => {
+    if (!templateLabels[input.value]) return;
+    const detail = input.parentElement.querySelector("small");
+    if (overrides[input.value] && detail) detail.textContent = `編集版 ${overrides[input.value].players.length}名`;
+    else if (detail) {
+      const defaults = { "npb-all": "支配下選手 807名", central: "支配下選手 404名", pacific: "支配下選手 403名", mlb: "現役日本人選手 11名", "npb-staff": "12球団 一軍・ファーム" };
+      detail.textContent = defaults[input.value];
+    }
+  });
   $("#custom-template-choices").innerHTML = templates.map((template) => `
     <label><input type="checkbox" name="player-template" value="${escapeHtml(template.id)}"><span><b>${escapeHtml(template.name)}</b><small>マイテンプレート ${template.players.length}名</small></span></label>`).join("");
   $("#saved-template-list").innerHTML = templates.length
-    ? `<h4>保存済みテンプレート</h4>${templates.map((template) => `<article><div><b>${escapeHtml(template.name)}</b><span>${template.players.length}名</span></div><button type="button" data-delete-template="${escapeHtml(template.id)}">削除</button></article>`).join("")}`
+    ? `<h4>保存済みテンプレート</h4>${templates.map((template) => `<article><div><b>${escapeHtml(template.name)}</b><span>${template.players.length}名</span></div><div class="saved-template-actions"><button type="button" data-edit-template="${escapeHtml(template.id)}">編集</button><button type="button" data-delete-template="${escapeHtml(template.id)}">削除</button></div></article>`).join("")}`
     : "<p>保存済みテンプレートはありません。</p>";
+  const presetOptions = Object.entries(templateLabels).map(([id, name]) => `<option value="${id}">${escapeHtml(name)}${overrides[id] ? "（編集済み）" : ""}</option>`).join("");
+  const customOptions = templates.map((template) => `<option value="${escapeHtml(template.id)}">${escapeHtml(template.name)}</option>`).join("");
+  $("#template-edit-select").innerHTML = `<option value="new">新しいテンプレートを作る</option><optgroup label="標準テンプレート">${presetOptions}</optgroup>${customOptions ? `<optgroup label="マイテンプレート">${customOptions}</optgroup>` : ""}`;
+  $("#template-edit-select").value = ["new", ...Object.keys(templateLabels), ...templates.map((template) => template.id)].includes(editingTemplateId) ? editingTemplateId : "new";
+  $$("[data-edit-template]").forEach((button) => button.addEventListener("click", () => {
+    $("#template-edit-select").value = button.dataset.editTemplate;
+    loadTemplateIntoEditor(button.dataset.editTemplate);
+  }));
   $$("[data-delete-template]").forEach((button) => button.addEventListener("click", () => {
     const next = loadCustomTemplates().filter((template) => template.id !== button.dataset.deleteTemplate);
     saveCustomTemplates(next);
+    if (editingTemplateId === button.dataset.deleteTemplate) {
+      editingTemplateId = "new";
+      loadTemplateIntoEditor("new");
+    }
     renderCustomTemplates();
     toast("テンプレートを削除しました。");
   }));
+}
+
+function loadTemplateIntoEditor(id) {
+  editingTemplateId = id;
+  if (id === "new") {
+    $("#template-form").reset();
+    $("#template-edit-select").value = "new";
+    $("#template-save-label").textContent = "テンプレートを保存";
+    $("#template-edit-notice").classList.add("hidden");
+    $("#reset-preset-template").classList.add("hidden");
+    return;
+  }
+  const isPreset = Boolean(templateLabels[id]);
+  const custom = loadCustomTemplates().find((template) => template.id === id);
+  const override = loadPresetOverrides()[id];
+  $("#template-name").value = isPreset ? templateLabels[id] : custom?.name || "";
+  $("#template-players").value = serializeTemplatePlayers(templatePlayers(id));
+  $("#template-save-label").textContent = isPreset ? "編集版を保存" : "変更を保存";
+  $("#template-edit-notice").textContent = isPreset
+    ? `${templateLabels[id]}を編集中です。変更はこの端末だけに保存され、部屋作成時は編集版が使われます。`
+    : "保存済みのマイテンプレートを編集中です。";
+  $("#template-edit-notice").classList.remove("hidden");
+  $("#reset-preset-template").classList.toggle("hidden", !isPreset || !override);
 }
 
 async function restoreSession() {
@@ -183,27 +269,38 @@ $("#draft-mode").addEventListener("change", (e) => { $("#conflict-mode").disable
 $("#template-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const name = $("#template-name").value.trim();
-  const lines = $("#template-players").value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const players = lines.map((line, index) => {
-    const [playerName, position = "—", team = "", uniformNumber = ""] = line.split(",").map((value) => value.trim());
-    return {
-      name: playerName,
-      position: position || "—",
-      team,
-      uniformNumber,
-      teamOrder: 500,
-      uniformSort: /^\d+$/.test(uniformNumber) ? Number(uniformNumber) : 9000 + index,
-      source: "custom-template",
-    };
-  }).filter((player) => player.name);
+  const players = parseTemplatePlayers($("#template-players").value);
   if (!name || !players.length) return toast("テンプレート名と選手を入力してください。");
+  if (templateLabels[editingTemplateId]) {
+    const overrides = loadPresetOverrides();
+    overrides[editingTemplateId] = { name: templateLabels[editingTemplateId], players, updatedAt: new Date().toISOString() };
+    savePresetOverrides(overrides);
+    renderCustomTemplates();
+    loadTemplateIntoEditor(editingTemplateId);
+    toast(`${templateLabels[editingTemplateId]}の編集版（${players.length}名）を保存しました。`);
+    return;
+  }
   const templates = loadCustomTemplates();
-  const id = `custom-${Date.now().toString(36)}`;
-  templates.push({ id, name, players, createdAt: new Date().toISOString() });
+  const existingIndex = templates.findIndex((template) => template.id === editingTemplateId);
+  const id = existingIndex >= 0 ? editingTemplateId : `custom-${Date.now().toString(36)}`;
+  const value = { id, name, players, updatedAt: new Date().toISOString() };
+  if (existingIndex >= 0) templates[existingIndex] = { ...templates[existingIndex], ...value };
+  else templates.push({ ...value, createdAt: new Date().toISOString() });
   saveCustomTemplates(templates);
-  event.target.reset();
+  editingTemplateId = id;
   renderCustomTemplates();
-  toast(`${players.length}名のテンプレートを保存しました。`);
+  loadTemplateIntoEditor(id);
+  toast(`${players.length}名のテンプレートを${existingIndex >= 0 ? "更新" : "保存"}しました。`);
+});
+$("#load-template").addEventListener("click", () => loadTemplateIntoEditor($("#template-edit-select").value));
+$("#reset-preset-template").addEventListener("click", () => {
+  if (!templateLabels[editingTemplateId]) return;
+  const overrides = loadPresetOverrides();
+  delete overrides[editingTemplateId];
+  savePresetOverrides(overrides);
+  renderCustomTemplates();
+  loadTemplateIntoEditor(editingTemplateId);
+  toast(`${templateLabels[editingTemplateId]}を標準状態に戻しました。`);
 });
 
 $("#create-form").addEventListener("submit", async (event) => {

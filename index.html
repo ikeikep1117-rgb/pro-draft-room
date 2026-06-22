@@ -65,15 +65,23 @@
         <form id="template-form" class="entry-form">
           <div class="template-editor-head">
             <p class="eyebrow">MY PLAYER TEMPLATE</p>
-            <h3>独自テンプレートを保存</h3>
-            <p>保存したテンプレートは、この端末で次回からも選択できます。</p>
+            <h3>テンプレートを編集・作成</h3>
+            <p>標準テンプレートも読み込んで、選手の追加・削除・修正ができます。</p>
           </div>
+          <div class="template-load-row">
+            <label>編集するテンプレート<select id="template-edit-select"><option value="new">新しいテンプレートを作る</option></select></label>
+            <button id="load-template" class="template-sub-button" type="button">読み込む</button>
+          </div>
+          <div id="template-edit-notice" class="template-edit-notice hidden"></div>
           <label>テンプレート名<input id="template-name" maxlength="30" placeholder="例：大学生ドラフト候補" required></label>
           <label>選手一覧
             <textarea id="template-players" rows="8" placeholder="1行に1名入力&#10;山田 太郎,内野手,〇〇大学,1&#10;佐藤 一郎,投手,△△高校,18" required></textarea>
           </label>
           <p class="template-format">形式：選手名, ポジション, 所属, 背番号　※選手名だけでも保存できます</p>
-          <button class="primary-button" type="submit"><span>テンプレートを保存</span><b>＋</b></button>
+          <div class="template-save-actions">
+            <button class="primary-button" type="submit"><span id="template-save-label">テンプレートを保存</span><b>＋</b></button>
+            <button id="reset-preset-template" class="template-sub-button danger hidden" type="button">標準状態に戻す</button>
+          </div>
           <div id="saved-template-list" class="saved-template-list"></div>
         </form>
         <p class="setup-note" id="setup-note"></p>
