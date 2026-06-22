@@ -441,12 +441,26 @@ async function resolveNominations() {
       id: `${Date.now()}_${i}`, playerId: g[0].playerId, playerName: g[0].playerName,
       entrants: g.map((n) => ({ memberId: n.memberId, memberName: n.memberName })),
     }));
+    const memberOrder = new Map(state.members.map((m, i) => [m.id, i]));
+    const revealItems = [...nominations]
+      .sort((a, b) => (memberOrder.get(a.memberId) ?? 999) - (memberOrder.get(b.memberId) ?? 999))
+      .map((n) => {
+        const player = state.players.find((p) => p.id === n.playerId) || n;
+        const member = state.members.find((m) => m.id === n.memberId) || n;
+        return makeRevealItem(member, player, state.room.round, false);
+      });
     await securePicks(uncontested, false);
-    if (conflicts.length) {
-      await startLotteryQueue(conflicts);
-    } else {
-      await finishNominationCycle([]);
-    }
+    await updateDoc(roomRef(), {
+      phase: "announcement",
+      lotteryQueue: conflicts,
+      lotteryIndex: 0,
+      lotteryLosers: [],
+      lottery: null,
+      announcement: {
+        ...makeAnnouncement(revealItems, state.room.round),
+        afterPhase: conflicts.length ? "lottery" : "next-round",
+      },
+    });
   } catch (error) { showError(error); }
 }
 
@@ -463,10 +477,6 @@ async function securePicks(items, viaLottery) {
   await batch.commit();
 }
 
-async function startLotteryQueue(groups) {
-  const current = makeLottery(groups[0], 0, groups.length);
-  await updateDoc(roomRef(), { phase: "lottery", lotteryQueue: groups, lotteryIndex: 0, lotteryLosers: [], lottery: current });
-}
 function makeLottery(group, index, total) {
   return { id: `${group.id}_${Date.now()}`, status: "overview", playerId: group.playerId, playerName: group.playerName, entrants: group.entrants, index, total };
 }
@@ -562,22 +572,24 @@ async function finishNominationCycle(losers) {
     toast(`外れ${state.room.round}位指名へ進みます。`);
     return;
   }
-  await finishRound();
+  await advanceToNextRound();
 }
 
-async function finishRound() {
-  const snap = await getDocs(collection(db, "rooms", state.roomId, "picks"));
-  const roundPicks = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((p) => p.round === state.room.round);
-  const order = new Map(state.members.map((m, i) => [m.id, i]));
-  roundPicks.sort((a, b) => (order.get(a.memberId) ?? 999) - (order.get(b.memberId) ?? 999));
-  const items = roundPicks.map((p) => {
-    const player = state.players.find((x) => x.id === p.playerId) || p;
-    const member = state.members.find((x) => x.id === p.memberId) || p;
-    return makeRevealItem(member, player, state.room.round, p.viaLottery);
-  });
+async function advanceToNextRound() {
+  const unfinished = state.members.filter((m) => !m.finished);
   const batch = writeBatch(db);
   state.members.forEach((m) => batch.update(doc(db, "rooms", state.roomId, "members", m.id), { hasSubmitted: false }));
-  batch.update(roomRef(), { phase: "announcement", lottery: null, lotteryQueue: [], eligibleMemberIds: [], announcement: makeAnnouncement(items, state.room.round) });
+  batch.update(roomRef(), {
+    phase: unfinished.length ? "nomination" : "completed",
+    status: unfinished.length ? "drafting" : "completed",
+    round: state.room.round + 1,
+    attempt: 1,
+    eligibleMemberIds: unfinished.map((m) => m.id),
+    lottery: null,
+    lotteryQueue: [],
+    lotteryIndex: 0,
+    lotteryLosers: [],
+  });
   await batch.commit();
 }
 
@@ -635,11 +647,19 @@ async function advanceAnnouncement(id = state.room?.announcement?.id, index = st
     await updateDoc(roomRef(), { announcement: { ...a, status: "done" }, revealedPickIds, phase: "completed", status: "completed" });
   } else if (state.room.draftMode === "sequential") {
     await updateDoc(roomRef(), { announcement: { ...a, status: "done" }, revealedPickIds, phase: "nomination" });
-  } else {
+  } else if (a.afterPhase === "lottery" && state.room.lotteryQueue?.length) {
+    const current = makeLottery(state.room.lotteryQueue[0], 0, state.room.lotteryQueue.length);
     await updateDoc(roomRef(), {
-      announcement: { ...a, status: "done" }, revealedPickIds, phase: "nomination",
-      round: state.room.round + 1, attempt: 1, eligibleMemberIds: unfinished.map((m) => m.id),
+      announcement: { ...a, status: "done" },
+      revealedPickIds,
+      phase: "lottery",
+      lotteryIndex: 0,
+      lotteryLosers: [],
+      lottery: current,
     });
+  } else {
+    await updateDoc(roomRef(), { announcement: { ...a, status: "done" }, revealedPickIds });
+    await advanceToNextRound();
   }
 }
 $("#skip-reveal").addEventListener("click", () => advanceAnnouncement());
