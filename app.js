@@ -364,14 +364,22 @@ $("#player-dialog").addEventListener("close", () => { state.editingPlayerId = nu
 
 $("#start-draft").addEventListener("click", async () => {
   if (!state.members.length || !state.players.length) return toast("参加球団と候補選手を確認してください。");
-  const batch = writeBatch(db);
-  state.members.forEach((m) => batch.update(doc(db, "rooms", state.roomId, "members", m.id), { finished: false, hasSubmitted: false }));
-  batch.update(roomRef(), {
-    status: "drafting", phase: "nomination", round: 1, attempt: 1, turnIndex: 0,
-    draftOrder: state.members.map((m) => m.id), eligibleMemberIds: state.members.map((m) => m.id),
-    announcement: null, revealedPickIds: [], lottery: null, lotteryQueue: [], lotteryLosers: [],
-  });
-  await batch.commit();
+  const button = $("#start-draft");
+  button.disabled = true;
+  try {
+    const batch = writeBatch(db);
+    state.members.forEach((m) => batch.update(doc(db, "rooms", state.roomId, "members", m.id), { finished: false, hasSubmitted: false }));
+    batch.update(roomRef(), {
+      status: "drafting", phase: "nomination", round: 1, attempt: 1, turnIndex: 0,
+      draftOrder: state.members.map((m) => m.id), eligibleMemberIds: state.members.map((m) => m.id),
+      announcement: null, revealedPickIds: [], lottery: null, lotteryQueue: [], lotteryLosers: [],
+    });
+    await batch.commit();
+  } catch (error) {
+    showError(error);
+  } finally {
+    button.disabled = false;
+  }
 });
 
 async function nominatePlayer(playerId) {
