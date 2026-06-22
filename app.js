@@ -13,7 +13,7 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const state = {
   user: null, roomId: null, room: null, members: [], players: [], picks: [],
-  myNomination: null, lotteryChoices: [], unsubs: [], filter: "all", search: "",
+  myNomination: null, lotteryChoices: [], unsubs: [], filter: "all", search: "", templateFilter: "all", teamFilter: "all",
   editingPlayerId: null, historyMemberId: null, announcementTimer: null,
   revealDelayTimer: null, renderedAnnouncement: "", targetIds: new Set(),
 };
@@ -89,18 +89,48 @@ function getSelectedTemplatePlayers() {
   const selected = $$('input[name="player-template"]:checked').map((input) => input.value);
   const customTemplates = loadCustomTemplates();
   const groups = selected.flatMap((id) => {
-    if (id === "npb-all") return selectDefaultPlayers("all");
-    if (id === "central" || id === "pacific") return selectDefaultPlayers(id);
-    if (id === "mlb") return MLB_JAPANESE_2026;
-    if (id === "npb-staff") return NPB_STAFF_2026;
-    return customTemplates.find((template) => template.id === id)?.players || [];
+    let players;
+    if (id === "npb-all") players = selectDefaultPlayers("all");
+    else if (id === "central" || id === "pacific") players = selectDefaultPlayers(id);
+    else if (id === "mlb") players = MLB_JAPANESE_2026;
+    else if (id === "npb-staff") players = NPB_STAFF_2026;
+    else players = customTemplates.find((template) => template.id === id)?.players || [];
+    return players.map((player) => ({ ...player, templateIds: [id] }));
   });
   const unique = new Map();
   groups.forEach((player) => {
     const key = `${normalizeName(player.name)}:${normalizeName(player.team || "")}`;
     if (!unique.has(key)) unique.set(key, player);
+    else unique.get(key).templateIds = [...new Set([...unique.get(key).templateIds, ...player.templateIds])];
   });
   return [...unique.values()];
+}
+
+const templateLabels = {
+  "npb-all": "NPB 12球団",
+  central: "セ・リーグ",
+  pacific: "パ・リーグ",
+  mlb: "MLB 日本人選手",
+  "npb-staff": "NPB 監督・コーチ",
+};
+function selectedTemplateMeta() {
+  const custom = loadCustomTemplates();
+  return $$('input[name="player-template"]:checked').map((input) => ({
+    id: input.value,
+    name: templateLabels[input.value] || custom.find((template) => template.id === input.value)?.name || "独自テンプレート",
+  }));
+}
+function inferredTemplateIds(player) {
+  if (player.templateIds?.length) return player.templateIds;
+  if (player.source === "mlb-japanese-2026") return ["mlb"];
+  if (player.source === "npb-staff-2026") return ["npb-staff"];
+  if (player.source === "npb-2026") {
+    const ids = ["npb-all"];
+    if ((player.teamOrder ?? 99) <= 6) ids.push("central");
+    else if ((player.teamOrder ?? 0) <= 12) ids.push("pacific");
+    return ids;
+  }
+  return [];
 }
 async function addDefaultPlayers(roomId, players) {
   const chunkSize = 400;
@@ -191,6 +221,7 @@ $("#create-form").addEventListener("submit", async (event) => {
       code, name: $("#room-name").value.trim(), hostId: state.user.uid, status: "waiting",
       phase: "waiting", draftMode: $("#draft-mode").value, conflictMode: $("#conflict-mode").value,
       selectedTemplates: $$('input[name="player-template"]:checked').map((input) => input.value),
+      selectedTemplateMeta: selectedTemplateMeta(),
       round: 1, attempt: 1, turnIndex: 0, draftOrder: [], eligibleMemberIds: [],
       announcement: null, revealedPickIds: [], lottery: null, lotteryQueue: [], lotteryIndex: 0,
       lotteryLosers: [], createdAt: serverTimestamp(),
@@ -234,6 +265,8 @@ $("#join-form").addEventListener("submit", async (event) => {
 function enterRoom(roomId) {
   cleanupListeners();
   state.roomId = roomId;
+  state.templateFilter = "all";
+  state.teamFilter = "all";
   try {
     state.targetIds = new Set(JSON.parse(localStorage.getItem(`draft-room-targets:${roomId}:${state.user.uid}`) || "[]"));
   } catch {
@@ -303,9 +336,22 @@ function render() {
   $("#member-count").textContent = String(state.members.length).padStart(2, "0");
   $$(".host-only").forEach((el) => el.classList.toggle("hidden", !isHost()));
   renderMembers();
+  renderPlayerFilterOptions();
   renderPlayers();
   renderStatus();
   renderHistory();
+}
+
+function renderPlayerFilterOptions() {
+  if (!state.room) return;
+  const meta = state.room.selectedTemplateMeta?.length
+    ? state.room.selectedTemplateMeta
+    : (state.room.selectedTemplates || []).map((id) => ({ id, name: templateLabels[id] || "独自テンプレート" }));
+  const options = [{ id: "all", name: "すべてのテンプレート" }, ...meta];
+  $("#template-filter").innerHTML = options.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("");
+  if (!options.some((item) => item.id === state.templateFilter)) state.templateFilter = "all";
+  $("#template-filter").value = state.templateFilter;
+  $("#team-filter").value = state.teamFilter;
 }
 
 function renderMembers() {
@@ -376,7 +422,12 @@ function renderPlayers() {
     state.room.draftMode === "simultaneous" ? activeMembers().some((m) => m.id === state.user?.uid) : currentTurnMember()?.id === state.user?.uid
   );
   const visible = state.players
-    .filter((p) => (state.filter === "all" || p.position === state.filter || (state.filter === "staff" && ["監督", "コーチ"].includes(p.position)) || (state.filter === "target" && state.targetIds.has(p.id))) && `${p.name} ${p.team || ""} ${p.role || ""}`.toLowerCase().includes(state.search.toLowerCase()))
+    .filter((p) =>
+      (state.filter === "all" || p.position === state.filter || (state.filter === "staff" && ["監督", "コーチ"].includes(p.position)) || (state.filter === "target" && state.targetIds.has(p.id)))
+      && (state.templateFilter === "all" || inferredTemplateIds(p).includes(state.templateFilter))
+      && (state.teamFilter === "all" || p.team === state.teamFilter)
+      && `${p.name} ${p.team || ""} ${p.role || ""}`.toLowerCase().includes(state.search.toLowerCase())
+    )
     .sort((a, b) =>
       Number(selected.has(a.id)) - Number(selected.has(b.id))
       || (a.teamOrder ?? 999) - (b.teamOrder ?? 999)
@@ -385,6 +436,7 @@ function renderPlayers() {
       || String(a.name).localeCompare(String(b.name), "ja")
     );
   $("#empty-players").classList.toggle("hidden", visible.length > 0);
+  $("#filtered-player-count").textContent = `${visible.length}名を表示`;
   $("#empty-players").innerHTML = state.filter === "target"
     ? "<span>☆</span><h4>狙っている選手はまだいません</h4><p>選手カードの「☆ 狙う」を押すと、ここに追加されます。</p>"
     : state.players.length
@@ -446,6 +498,19 @@ $$(".filter").forEach((b) => b.addEventListener("click", () => {
   renderPlayers();
 }));
 $("#player-search").addEventListener("input", (e) => { state.search = e.target.value; renderPlayers(); });
+$("#player-filter-toggle").addEventListener("click", () => {
+  $("#player-filter-panel").classList.toggle("hidden");
+  $("#player-filter-toggle").classList.toggle("active", !$("#player-filter-panel").classList.contains("hidden"));
+});
+$("#template-filter").addEventListener("change", (e) => { state.templateFilter = e.target.value; renderPlayers(); });
+$("#team-filter").addEventListener("change", (e) => { state.teamFilter = e.target.value; renderPlayers(); });
+$("#clear-player-filters").addEventListener("click", () => {
+  state.templateFilter = "all";
+  state.teamFilter = "all";
+  $("#template-filter").value = "all";
+  $("#team-filter").value = "all";
+  renderPlayers();
+});
 
 $("#add-player-open").addEventListener("click", () => {
   state.editingPlayerId = null;

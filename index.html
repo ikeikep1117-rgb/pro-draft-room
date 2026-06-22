@@ -112,7 +112,7 @@
       <section class="players-panel panel">
         <div class="panel-heading players-heading">
           <div><p>PLAYER BOARD</p><h3>候補選手一覧</h3></div>
-          <div class="player-tools"><label class="search-box"><span>⌕</span><input id="player-search" placeholder="選手を検索"></label><button id="add-player-open" class="add-button" type="button">＋ 選手追加</button></div>
+          <div class="player-tools"><label class="search-box"><span>⌕</span><input id="player-search" placeholder="選手を検索"></label><button id="player-filter-toggle" class="filter-toggle-button" type="button">絞り込み</button><button id="add-player-open" class="add-button" type="button">＋ 選手追加</button></div>
         </div>
         <div class="position-filters">
           <button class="filter active" data-position="all" type="button">すべて</button>
@@ -122,6 +122,21 @@
           <button class="filter" data-position="外野手" type="button">外野手</button>
           <button class="filter target-filter" data-position="target" type="button">★ 狙う</button>
           <button class="filter" data-position="staff" type="button">監督・コーチ</button>
+        </div>
+        <div id="player-filter-panel" class="player-filter-panel hidden">
+          <label>テンプレート
+            <select id="template-filter"><option value="all">すべてのテンプレート</option></select>
+          </label>
+          <label>NPB球団
+            <select id="team-filter">
+              <option value="all">12球団すべて</option>
+              <option>阪神タイガース</option><option>横浜DeNAベイスターズ</option><option>読売ジャイアンツ</option>
+              <option>中日ドラゴンズ</option><option>広島東洋カープ</option><option>東京ヤクルトスワローズ</option>
+              <option>福岡ソフトバンクホークス</option><option>北海道日本ハムファイターズ</option><option>オリックス・バファローズ</option>
+              <option>東北楽天ゴールデンイーグルス</option><option>埼玉西武ライオンズ</option><option>千葉ロッテマリーンズ</option>
+            </select>
+          </label>
+          <div class="filter-panel-actions"><span id="filtered-player-count">0名を表示</span><button id="clear-player-filters" type="button">条件をクリア</button></div>
         </div>
         <div id="players-list" class="players-list"></div>
         <div id="empty-players" class="empty-state hidden"><span>◇</span><h4>候補選手がまだ登録されていません</h4><p>「選手追加」から候補選手を登録してください。</p></div>

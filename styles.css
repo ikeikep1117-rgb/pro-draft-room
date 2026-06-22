@@ -31,3 +31,10 @@
 .target-button{border:0;background:transparent;color:#718097;padding:1px 3px;font-size:8px;font-weight:800;cursor:pointer;white-space:nowrap}
 .target-button:hover,.target-button.active{color:var(--gold2)}
 .player-card.targeted:not(.picked){box-shadow:inset 3px 0 var(--gold)}
+
+.filter-toggle-button{border:1px solid var(--line);background:#0b1525;color:#8490a3;padding:0 11px;font-size:9px;font-weight:800;cursor:pointer;white-space:nowrap}
+.filter-toggle-button:hover,.filter-toggle-button.active{border-color:var(--gold);color:var(--gold)}
+.player-filter-panel{display:grid;grid-template-columns:minmax(160px,1fr) minmax(190px,1fr) auto;gap:10px;align-items:end;padding:12px 17px;border-bottom:1px solid var(--line);background:#08111e}
+.player-filter-panel label{font-size:9px}.player-filter-panel select{padding:9px 11px;font-size:10px}
+.filter-panel-actions{display:flex;align-items:center;gap:9px;min-height:36px}.filter-panel-actions span{color:var(--gold);font-size:9px;white-space:nowrap}.filter-panel-actions button{border:0;background:transparent;color:#7d899b;font-size:8px;cursor:pointer;white-space:nowrap}.filter-panel-actions button:hover{color:#fff}
+@media(max-width:680px){.player-tools{flex-wrap:wrap}.search-box{min-width:0}.filter-toggle-button,.add-button{height:38px}.player-filter-panel{grid-template-columns:1fr 1fr;padding:11px 14px}.filter-panel-actions{grid-column:1/-1;justify-content:space-between}}
