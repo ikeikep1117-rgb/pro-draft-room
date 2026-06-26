@@ -67,6 +67,13 @@ service cloud.firestore {
           request.resource.data.memberId == request.auth.uid;
         allow delete: if isHost(roomId);
       }
+
+      match /lineups/{memberId} {
+        allow read: if isMember(roomId);
+        allow create, update: if isMember(roomId) &&
+          (memberId == request.auth.uid || isHost(roomId));
+        allow delete: if isHost(roomId) || memberId == request.auth.uid;
+      }
     }
   }
 }

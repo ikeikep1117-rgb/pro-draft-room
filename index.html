@@ -1,10 +1,18 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#050b18">
   <title>DRAFT NIGHT — オンライン・ドラフト会議</title>
+  <meta name="description" content="複数人でリアルタイムに参加できる、プロ野球ドラフト風オンライン会議アプリ。">
+  <meta property="og:title" content="DRAFT NIGHT — オンライン・ドラフト会議">
+  <meta property="og:description" content="指名、競合抽選、発表演出、リザルト、オーダー作成まで楽しめるドラフト会議アプリ。">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://pro-draft-room-vercel.vercel.app/assets/draft-stage.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="./assets/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./assets/app-icon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;600;700;800;900&family=Oswald:wght@500;600;700&display=swap" rel="stylesheet">
@@ -49,7 +57,7 @@
               <label><input type="checkbox" name="player-template" value="npb-all" checked><span><b>NPB 12球団</b><small>支配下選手 807名</small></span></label>
               <label><input type="checkbox" name="player-template" value="central"><span><b>セ・リーグ</b><small>支配下選手 404名</small></span></label>
               <label><input type="checkbox" name="player-template" value="pacific"><span><b>パ・リーグ</b><small>支配下選手 403名</small></span></label>
-              <label><input type="checkbox" name="player-template" value="mlb"><span><b>MLB 日本人選手</b><small>現役日本人選手 11名</small></span></label>
+              <label><input type="checkbox" name="player-template" value="mlb"><span><b>MLB 日本人選手</b><small>現役日本人選手 14名</small></span></label>
               <label><input type="checkbox" name="player-template" value="npb-staff"><span><b>NPB 監督・コーチ</b><small>12球団 一軍・ファーム</small></span></label>
             </div>
             <div id="custom-template-choices" class="template-choice-list custom-template-choices"></div>
@@ -146,6 +154,7 @@
           </label>
           <div class="filter-panel-actions"><span id="filtered-player-count">0名を表示</span><button id="clear-player-filters" type="button">条件をクリア</button></div>
         </div>
+        <div id="my-draft-panel" class="my-draft-panel hidden" aria-live="polite"></div>
         <div id="players-list" class="players-list"></div>
         <div id="empty-players" class="empty-state hidden"><span>◇</span><h4>候補選手がまだ登録されていません</h4><p>「選手追加」から候補選手を登録してください。</p></div>
       </section>
@@ -228,6 +237,11 @@
     </section>
     <section class="result-board-wrap"><div id="result-board" class="result-board"></div></section>
     <section><div class="result-section-title"><p>TEAM RESULTS</p><h2>チーム別獲得選手</h2></div><div id="team-results" class="team-results"></div></section>
+    <section class="lineup-builder-section">
+      <div class="result-section-title"><p>LINEUP BUILDER</p><h2>獲得選手でオーダー作成</h2></div>
+      <div id="lineup-tabs" class="lineup-tabs"></div>
+      <div id="lineup-builder" class="lineup-builder"></div>
+    </section>
     <button id="result-back" class="ghost-button" type="button">ドラフトルームに戻る</button>
   </main>
 

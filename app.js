@@ -13,8 +13,8 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const state = {
   user: null, roomId: null, room: null, members: [], players: [], picks: [],
-  myNomination: null, lotteryChoices: [], unsubs: [], filter: "all", search: "", templateFilter: "all", teamFilter: "all",
-  editingPlayerId: null, historyMemberId: null, announcementTimer: null,
+  myNomination: null, lotteryChoices: [], lineups: {}, unsubs: [], filter: "all", search: "", templateFilter: "all", teamFilter: "all",
+  editingPlayerId: null, historyMemberId: null, lineupMemberId: null, announcementTimer: null, lotteryRevealTimer: null,
   revealDelayTimer: null, renderedAnnouncement: "", targetIds: new Set(),
 };
 let db;
@@ -68,6 +68,26 @@ function hasSubmitted(member) {
   return member.hasSubmitted && member.nominationRound === state.room?.round && member.nominationAttempt === currentAttempt();
 }
 function pickedIds() { return new Set(state.picks.map((p) => p.playerId)); }
+function playerById(id) { return state.players.find((p) => p.id === id) || null; }
+function pickWithPlayer(pick) { return { ...pick, player: playerById(pick.playerId) }; }
+function isPitcherLike(player) { return (player?.position || "").includes("投手"); }
+function isStaffLike(player) { return ["監督", "コーチ"].includes(player?.position); }
+function playerKindCounts(memberId, includeNomination = false) {
+  const selected = state.picks
+    .filter((p) => p.memberId === memberId)
+    .map((p) => pickWithPlayer(p));
+  if (includeNomination && state.myNomination?.memberId === memberId && state.room?.phase === "nomination") {
+    selected.push({ playerId: state.myNomination.playerId, playerName: state.myNomination.playerName, player: playerById(state.myNomination.playerId), pending: true });
+  }
+  return selected.reduce((acc, item) => {
+    const player = item.player;
+    if (isStaffLike(player)) acc.staff += 1;
+    else if (isPitcherLike(player)) acc.pitchers += 1;
+    else acc.hitters += 1;
+    acc.total += 1;
+    return acc;
+  }, { pitchers: 0, hitters: 0, staff: 0, total: 0 });
+}
 function currentTurnMember() {
   const active = state.members.filter((m) => !m.finished);
   if (!active.length) return null;
@@ -78,6 +98,7 @@ function cleanupListeners() {
   state.unsubs = [];
   clearTimeout(state.announcementTimer);
   clearTimeout(state.revealDelayTimer);
+  clearTimeout(state.lotteryRevealTimer);
 }
 
 function loadCustomTemplates() {
@@ -154,6 +175,20 @@ const templateLabels = {
   mlb: "MLB 日本人選手",
   "npb-staff": "NPB 監督・コーチ",
 };
+const lineupSections = [
+  {
+    id: "starters",
+    title: "スタメン（DH制）",
+    type: "hitter",
+    slots: ["1番", "2番", "3番", "4番", "5番", "6番", "7番", "8番", "9番"],
+  },
+  { id: "benchHitters", title: "控え野手", type: "hitter", slots: ["控え野手1", "控え野手2", "控え野手3", "控え野手4"] },
+  { id: "startersPitchers", title: "先発投手", type: "pitcher", slots: ["先発1", "先発2", "先発3", "先発4", "先発5"] },
+  { id: "relievers", title: "中継ぎ", type: "pitcher", slots: ["中継ぎ1", "中継ぎ2", "中継ぎ3", "中継ぎ4"] },
+  { id: "closer", title: "抑え", type: "pitcher", slots: ["抑え"] },
+  { id: "reservePitcher", title: "控え投手", type: "pitcher", slots: ["控え投手"] },
+];
+const emptyLineup = () => Object.fromEntries(lineupSections.map((section) => [section.id, section.slots.map(() => "")]));
 function selectedTemplateMeta() {
   const custom = loadCustomTemplates();
   return $$('input[name="player-template"]:checked').map((input) => ({
@@ -198,7 +233,7 @@ function renderCustomTemplates() {
     const detail = input.parentElement.querySelector("small");
     if (overrides[input.value] && detail) detail.textContent = `編集版 ${overrides[input.value].players.length}名`;
     else if (detail) {
-      const defaults = { "npb-all": "支配下選手 807名", central: "支配下選手 404名", pacific: "支配下選手 403名", mlb: "現役日本人選手 11名", "npb-staff": "12球団 一軍・ファーム" };
+      const defaults = { "npb-all": "支配下選手 807名", central: "支配下選手 404名", pacific: "支配下選手 403名", mlb: "現役日本人選手 14名", "npb-staff": "12球団 一軍・ファーム" };
       detail.textContent = defaults[input.value];
     }
   });
@@ -403,10 +438,15 @@ function enterRoom(roomId) {
       state.myNomination = snap.exists() ? { id: snap.id, ...snap.data() } : null;
       renderPlayers();
       renderStatus();
+      renderMyDraftPanel();
     }, showError),
     onSnapshot(collection(db, "rooms", roomId, "lotteryChoices"), (snap) => {
       state.lotteryChoices = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
       renderLottery();
+    }, showError),
+    onSnapshot(collection(db, "rooms", roomId, "lineups"), (snap) => {
+      state.lineups = Object.fromEntries(snap.docs.map((d) => [d.id, d.data()]));
+      renderFinalResults();
     }, showError),
   );
 }
@@ -414,7 +454,7 @@ function enterRoom(roomId) {
 function leaveRoom() {
   cleanupListeners();
   localStorage.removeItem("draft-room-session");
-  Object.assign(state, { roomId: null, room: null, members: [], players: [], picks: [], myNomination: null, lotteryChoices: [], targetIds: new Set() });
+  Object.assign(state, { roomId: null, room: null, members: [], players: [], picks: [], myNomination: null, lotteryChoices: [], lineups: {}, targetIds: new Set() });
   $("#reveal-screen").classList.add("hidden");
   $("#final-results").classList.add("hidden");
   $("#room").classList.add("hidden");
@@ -437,6 +477,7 @@ function render() {
   renderPlayers();
   renderStatus();
   renderHistory();
+  renderMyDraftPanel();
 }
 
 function renderPlayerFilterOptions() {
@@ -563,6 +604,33 @@ function toggleTargetPlayer(playerId) {
   else state.targetIds.add(playerId);
   localStorage.setItem(`draft-room-targets:${state.roomId}:${state.user.uid}`, JSON.stringify([...state.targetIds]));
   renderPlayers();
+}
+
+function renderMyDraftPanel() {
+  const panel = $("#my-draft-panel");
+  const me = currentMember();
+  if (!panel || !me || !state.room || state.room.phase === "waiting") {
+    panel?.classList.add("hidden");
+    return;
+  }
+  const mine = state.myNomination && state.myNomination.round === state.room.round && state.myNomination.attempt === currentAttempt()
+    ? state.myNomination
+    : null;
+  const counts = playerKindCounts(me.id, true);
+  const player = mine ? playerById(mine.playerId) : null;
+  panel.classList.remove("hidden");
+  panel.innerHTML = `
+    <div class="my-draft-main">
+      <span>MY PICK</span>
+      <strong>${mine ? escapeHtml(mine.playerName) : me.finished ? "指名終了済み" : "まだ指名していません"}</strong>
+      <small>${mine ? escapeHtml([player?.team, player?.position].filter(Boolean).join(" / ") || "締切までは変更できます") : "この表示は自分の画面だけに出ます"}</small>
+    </div>
+    <div class="my-draft-counts">
+      <b>投手 ${counts.pitchers}</b>
+      <b>野手 ${counts.hitters}</b>
+      ${counts.staff ? `<b>スタッフ ${counts.staff}</b>` : ""}
+      <span>合計 ${counts.total}</span>
+    </div>`;
 }
 
 function renderHistory() {
@@ -774,12 +842,15 @@ function renderLottery() {
   const dialog = $("#lottery-dialog");
   if (state.room?.phase !== "lottery" || !lottery) {
     if (dialog.open) dialog.close();
+    dialog.classList.remove("lottery-resolving");
     return;
   }
   if (!dialog.open) dialog.showModal();
   const choices = state.lotteryChoices.filter((c) => c.lotteryId === lottery.id);
   const mine = choices.find((c) => c.memberId === state.user?.uid);
   const entrant = lottery.entrants.some((e) => e.memberId === state.user?.uid);
+  const resolving = lottery.status === "resolving";
+  dialog.classList.toggle("lottery-resolving", resolving);
   $("#lottery-step").textContent = `${String((lottery.index || 0) + 1).padStart(2, "0")} / ${String(lottery.total || 1).padStart(2, "0")}`;
   $("#lottery-player").textContent = lottery.playerName;
   $("#lottery-teams").textContent = lottery.entrants.map((e) => e.memberName).join(" × ");
@@ -795,12 +866,15 @@ function renderLottery() {
     const opened = lottery.status === "revealed";
     const winnerChoice = choices.find((c) => c.memberId === lottery.winner?.memberId);
     const winnerEnvelope = winnerChoice?.envelope;
-    return `<button class="envelope ${selected ? "selected" : ""} ${opened ? "opened" : ""} ${opened && i === winnerEnvelope ? "winner" : ""}" data-envelope="${i}" ${!entrant || lottery.status !== "choosing" ? "disabled" : ""}>
+    return `<button class="envelope ${selected ? "selected" : ""} ${resolving ? "resolving" : ""} ${opened ? "opened" : ""} ${opened && i === winnerEnvelope ? "winner" : ""}" data-envelope="${i}" ${!entrant || lottery.status !== "choosing" ? "disabled" : ""}>
       <i></i><b>${opened && i === winnerEnvelope ? "交渉権確定" : `封筒 ${i + 1}`}</b></button>`;
   }).join("");
   $$("[data-envelope]").forEach((b) => b.addEventListener("click", () => selectEnvelope(Number(b.dataset.envelope))));
   const allChosen = lottery.entrants.every((e) => choices.some((c) => c.memberId === e.memberId));
-  $("#lottery-guide").textContent = lottery.status === "overview" ? `競合 ${state.room.lotteryQueue.length}件を順番に抽選します` : lottery.status === "revealed" ? "抽選結果が確定しました" : mine ? `封筒 ${mine.envelope + 1} を選択済み` : entrant ? "封筒を1つ選択してください" : `${choices.length} / ${lottery.entrants.length} 球団が選択済み`;
+  $("#lottery-guide").textContent = lottery.status === "overview"
+    ? `競合 ${state.room.lotteryQueue.length}件を順番に抽選します`
+    : resolving ? "封筒を開封中…交渉権獲得球団をまもなく発表します"
+      : lottery.status === "revealed" ? "抽選結果が確定しました" : mine ? `封筒 ${mine.envelope + 1} を選択済み` : entrant ? "封筒を1つ選択してください" : `${choices.length} / ${lottery.entrants.length} 球団が選択済み`;
   $("#run-lottery").classList.toggle("hidden", !isHost() || !["overview", "choosing"].includes(lottery.status));
   $("#run-lottery").textContent = lottery.status === "overview" ? "競合一覧を確認して抽選へ" : "封筒を一斉開封";
   $("#run-lottery").disabled = lottery.status === "choosing" && !allChosen;
@@ -809,6 +883,13 @@ function renderLottery() {
   if (lottery.status === "revealed") {
     $("#lottery-winner").textContent = lottery.winner.memberName;
     $("#lottery-winning-player").textContent = `${lottery.playerName} 交渉権獲得`;
+  }
+  clearTimeout(state.lotteryRevealTimer);
+  if (isHost() && resolving && lottery.winner) {
+    const wait = Math.max(0, 3800 - (Date.now() - (lottery.resolveStartedAt || Date.now())));
+    state.lotteryRevealTimer = setTimeout(() => {
+      updateDoc(roomRef(), { lottery: { ...lottery, status: "revealed", revealedAt: Date.now() } }).catch(showError);
+    }, wait);
   }
 }
 
@@ -828,7 +909,7 @@ $("#run-lottery").addEventListener("click", async () => {
   }
   const entrants = lottery.entrants;
   const winner = entrants[Math.floor(Math.random() * entrants.length)];
-  await updateDoc(roomRef(), { lottery: { ...lottery, status: "revealed", winner, revealedAt: Date.now() } });
+  await updateDoc(roomRef(), { lottery: { ...lottery, status: "resolving", winner, resolveStartedAt: Date.now() } });
 });
 
 $("#close-lottery").addEventListener("click", async () => {
@@ -952,6 +1033,88 @@ async function advanceAnnouncement(id = state.room?.announcement?.id, index = st
 }
 $("#skip-reveal").addEventListener("click", () => advanceAnnouncement());
 
+function teamPicks(memberId) {
+  return state.picks
+    .filter((p) => p.memberId === memberId)
+    .map((p) => pickWithPlayer(p))
+    .sort((a, b) => (a.round || 0) - (b.round || 0) || String(a.playerName).localeCompare(String(b.playerName), "ja"));
+}
+
+function lineupData(memberId) {
+  const data = state.lineups[memberId]?.slots || {};
+  return Object.fromEntries(lineupSections.map((section) => {
+    const values = Array.isArray(data[section.id]) ? data[section.id].slice(0, section.slots.length) : [];
+    return [section.id, [...values, ...Array(section.slots.length).fill("")].slice(0, section.slots.length)];
+  }));
+}
+
+function renderLineupBuilder() {
+  if (!state.room || state.room.phase !== "completed") return;
+  if (!state.lineupMemberId || !state.members.some((m) => m.id === state.lineupMemberId)) {
+    state.lineupMemberId = currentMember()?.id || state.members[0]?.id || null;
+  }
+  const selectedMember = state.members.find((m) => m.id === state.lineupMemberId);
+  $("#lineup-tabs").innerHTML = state.members.map((m) => `<button type="button" data-lineup-team="${m.id}" class="${m.id === state.lineupMemberId ? "active" : ""}">${escapeHtml(m.name)}</button>`).join("");
+  if (!selectedMember) {
+    $("#lineup-builder").innerHTML = "<div class='empty-state compact'>球団がありません</div>";
+    return;
+  }
+  const canEdit = selectedMember.id === state.user?.uid || isHost();
+  const picks = teamPicks(selectedMember.id);
+  const counts = playerKindCounts(selectedMember.id);
+  const lineup = lineupData(selectedMember.id);
+  const byId = new Map(picks.map((p) => [p.playerId, p]));
+  const optionHtml = (sectionType, selectedId) => {
+    const filtered = picks.filter((p) => sectionType === "pitcher" ? isPitcherLike(p.player) : !isPitcherLike(p.player) && !isStaffLike(p.player));
+    const fallback = filtered.length ? filtered : picks;
+    return [`<option value="">未設定</option>`, ...fallback.map((p) => `<option value="${escapeHtml(p.playerId)}" ${p.playerId === selectedId ? "selected" : ""}>${escapeHtml(p.playerName)}${p.player?.position ? `（${escapeHtml(p.player.position)}）` : ""}</option>`)].join("");
+  };
+  $("#lineup-builder").innerHTML = `
+    <div class="lineup-team-card">
+      <div><p>SELECTED TEAM</p><h3>${escapeHtml(selectedMember.name)}</h3></div>
+      <div class="lineup-counts"><b>投手 ${counts.pitchers}</b><b>野手 ${counts.hitters}</b>${counts.staff ? `<b>スタッフ ${counts.staff}</b>` : ""}<span>計 ${counts.total}</span></div>
+      <small>${canEdit ? "選手を選ぶと自動保存されます。" : "この球団のオーダーを閲覧中です。"}</small>
+    </div>
+    <div class="lineup-grid">
+      ${lineupSections.map((section) => `
+        <article class="lineup-section">
+          <header><p>${section.type === "pitcher" ? "PITCHING STAFF" : "BATTING ORDER"}</p><h4>${section.title}</h4></header>
+          ${section.slots.map((label, index) => {
+            const selectedId = lineup[section.id][index] || "";
+            const pick = byId.get(selectedId);
+            return `<label class="lineup-slot"><span>${escapeHtml(label)}</span>
+              <select data-lineup-section="${section.id}" data-lineup-index="${index}" ${canEdit ? "" : "disabled"}>
+                ${optionHtml(section.type, selectedId)}
+              </select>
+              <small>${pick ? escapeHtml([pick.player?.team, pick.player?.position, `${pick.round}巡目`].filter(Boolean).join(" / ")) : "—"}</small>
+            </label>`;
+          }).join("")}
+        </article>`).join("")}
+    </div>`;
+  $$("[data-lineup-team]").forEach((button) => button.addEventListener("click", () => {
+    state.lineupMemberId = button.dataset.lineupTeam;
+    renderLineupBuilder();
+  }));
+  $$("[data-lineup-section]").forEach((select) => select.addEventListener("change", () => saveLineupSelection(selectedMember.id, select.dataset.lineupSection, Number(select.dataset.lineupIndex), select.value)));
+}
+
+async function saveLineupSelection(memberId, sectionId, index, playerId) {
+  if (memberId !== state.user?.uid && !isHost()) return;
+  const slots = lineupData(memberId);
+  Object.keys(slots).forEach((key) => {
+    slots[key] = slots[key].map((value, slotIndex) => (value === playerId && !(key === sectionId && slotIndex === index) ? "" : value));
+  });
+  slots[sectionId][index] = playerId;
+  try {
+    await setDoc(doc(db, "rooms", state.roomId, "lineups", memberId), {
+      memberId,
+      slots,
+      updatedAt: serverTimestamp(),
+      updatedBy: state.user.uid,
+    }, { merge: true });
+  } catch (error) { showError(error); }
+}
+
 function renderFinalResults() {
   const completed = state.room?.phase === "completed";
   $("#final-results").classList.toggle("hidden", !completed);
@@ -974,8 +1137,10 @@ function renderFinalResults() {
   $("#result-board").innerHTML = cells.join("");
   $("#team-results").innerHTML = state.members.map((m, i) => {
     const picks = state.picks.filter((p) => p.memberId === m.id).sort((a, b) => a.round - b.round);
-    return `<article><header><span>${String(i + 1).padStart(2, "0")}</span><h3>${escapeHtml(m.name)}</h3><b>${picks.length}名</b></header>${picks.map((p) => `<p><i>${p.round}巡目</i><strong>${escapeHtml(p.playerName)}</strong></p>`).join("") || "<p>指名なし</p>"}</article>`;
+    const counts = playerKindCounts(m.id);
+    return `<article><header><span>${String(i + 1).padStart(2, "0")}</span><h3>${escapeHtml(m.name)}</h3><b>${picks.length}名</b></header><div class="team-result-counts"><small>投手 ${counts.pitchers}</small><small>野手 ${counts.hitters}</small>${counts.staff ? `<small>スタッフ ${counts.staff}</small>` : ""}</div>${picks.map((p) => `<p><i>${p.round}巡目</i><strong>${escapeHtml(p.playerName)}</strong></p>`).join("") || "<p>指名なし</p>"}</article>`;
   }).join("");
+  renderLineupBuilder();
 }
 $("#result-back").addEventListener("click", () => { $("#final-results").classList.add("hidden"); $("#room").classList.remove("hidden"); });
 
