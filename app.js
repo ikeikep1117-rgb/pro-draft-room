@@ -180,17 +180,17 @@ const lineupSections = [
     id: "starters",
     title: "スタメン（DH制）",
     type: "hitter",
+    positionMode: "starter",
     slots: ["1番", "2番", "3番", "4番", "5番", "6番", "7番", "8番", "9番"],
   },
-  { id: "benchHitters", title: "控え野手", type: "hitter", slots: ["控え野手1", "控え野手2", "控え野手3", "控え野手4"] },
-  { id: "startersPitchers", title: "先発投手", type: "pitcher", slots: ["先発1", "先発2", "先発3", "先発4", "先発5"] },
-  { id: "relievers", title: "中継ぎ", type: "pitcher", slots: ["中継ぎ1", "中継ぎ2", "中継ぎ3", "中継ぎ4"] },
-  { id: "closer", title: "抑え", type: "pitcher", slots: ["抑え"] },
-  { id: "reservePitcher", title: "控え投手", type: "pitcher", slots: ["控え投手"] },
+  { id: "benchHitters", title: "控え野手", type: "hitter", positionMode: "bench", slots: ["控え野手1", "控え野手2", "控え野手3", "控え野手4"] },
+  { id: "startersPitchers", title: "先発投手", type: "pitcher", positionMode: "none", slots: ["先発1", "先発2", "先発3", "先発4", "先発5"] },
+  { id: "relievers", title: "中継ぎ", type: "pitcher", positionMode: "none", slots: ["中継ぎ1", "中継ぎ2", "中継ぎ3", "中継ぎ4"] },
+  { id: "closer", title: "抑え・控え投手", type: "pitcher", positionMode: "none", slots: ["抑え", "控え投手"] },
 ];
 const emptyLineup = () => Object.fromEntries(lineupSections.map((section) => [section.id, section.slots.map(() => "")]));
-const hitterLineupPositions = ["捕手", "一塁手", "二塁手", "三塁手", "遊撃手", "左翼手", "中堅手", "右翼手", "指名打者", "代打", "代走", "守備固め"];
-const pitcherLineupPositions = ["先発", "中継ぎ", "抑え", "ロングリリーフ", "セットアッパー", "左投手", "右投手"];
+const starterLineupPositions = ["捕手", "一塁手", "二塁手", "三塁手", "遊撃手", "左翼手", "中堅手", "右翼手", "指名打者"];
+const benchLineupPositions = ["代打", "代走", "守備固め"];
 function selectedTemplateMeta() {
   const custom = loadCustomTemplates();
   return $$('input[name="player-template"]:checked').map((input) => ({
@@ -1047,6 +1047,7 @@ function lineupData(memberId) {
   const used = new Set();
   return Object.fromEntries(lineupSections.map((section) => {
     const values = Array.isArray(data[section.id]) ? data[section.id].slice(0, section.slots.length) : [];
+    if (section.id === "closer" && values.length < 2 && Array.isArray(data.reservePitcher)) values[1] = data.reservePitcher[0] || "";
     return [section.id, [...values, ...Array(section.slots.length).fill("")].slice(0, section.slots.length).map((playerId) => {
       if (!playerId) return "";
       if (used.has(playerId)) return "";
@@ -1060,6 +1061,7 @@ function lineupPositionData(memberId) {
   const data = state.lineups[memberId]?.positions || {};
   return Object.fromEntries(lineupSections.map((section) => {
     const values = Array.isArray(data[section.id]) ? data[section.id].slice(0, section.slots.length) : [];
+    if (section.positionMode === "none") return [section.id, section.slots.map(() => "")];
     return [section.id, [...values, ...Array(section.slots.length).fill("")].slice(0, section.slots.length)];
   }));
 }
@@ -1087,8 +1089,8 @@ function renderLineupBuilder() {
     const fallback = (filtered.length ? filtered : picks).filter((p) => p.playerId === selectedId || !usedPlayerIds.has(p.playerId));
     return [`<option value="">未設定</option>`, ...fallback.map((p) => `<option value="${escapeHtml(p.playerId)}" ${p.playerId === selectedId ? "selected" : ""}>${escapeHtml(p.playerName)}</option>`)].join("");
   };
-  const positionOptionHtml = (sectionType, selectedPosition) => {
-    const options = sectionType === "pitcher" ? pitcherLineupPositions : hitterLineupPositions;
+  const positionOptionHtml = (section, selectedPosition) => {
+    const options = section.positionMode === "bench" ? benchLineupPositions : starterLineupPositions;
     return [`<option value="">ポジション未設定</option>`, ...options.map((position) => `<option value="${escapeHtml(position)}" ${position === selectedPosition ? "selected" : ""}>${escapeHtml(position)}</option>`)].join("");
   };
   $("#lineup-builder").innerHTML = `
@@ -1105,13 +1107,13 @@ function renderLineupBuilder() {
             const selectedId = lineup[section.id][index] || "";
             const selectedPosition = positions[section.id][index] || "";
             const pick = byId.get(selectedId);
-            return `<label class="lineup-slot"><span>${escapeHtml(label)}</span>
+            return `<label class="lineup-slot ${section.positionMode === "none" ? "no-position" : ""}"><span>${escapeHtml(label)}</span>
               <select class="lineup-player-select" data-lineup-player-section="${section.id}" data-lineup-player-index="${index}" ${canEdit ? "" : "disabled"}>
                 ${optionHtml(section.type, selectedId)}
               </select>
-              <select class="lineup-position-select" data-lineup-position-section="${section.id}" data-lineup-position-index="${index}" ${canEdit ? "" : "disabled"}>
-                ${positionOptionHtml(section.type, selectedPosition)}
-              </select>
+              ${section.positionMode === "none" ? "" : `<select class="lineup-position-select" data-lineup-position-section="${section.id}" data-lineup-position-index="${index}" ${canEdit ? "" : "disabled"}>
+                ${positionOptionHtml(section, selectedPosition)}
+              </select>`}
               <small>${pick ? escapeHtml([pick.player?.team, `${pick.round}巡目`].filter(Boolean).join(" / ")) : "—"}</small>
             </label>`;
           }).join("")}
