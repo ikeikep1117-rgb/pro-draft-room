@@ -189,6 +189,8 @@ const lineupSections = [
   { id: "reservePitcher", title: "控え投手", type: "pitcher", slots: ["控え投手"] },
 ];
 const emptyLineup = () => Object.fromEntries(lineupSections.map((section) => [section.id, section.slots.map(() => "")]));
+const hitterLineupPositions = ["捕手", "一塁手", "二塁手", "三塁手", "遊撃手", "左翼手", "中堅手", "右翼手", "指名打者", "代打", "代走", "守備固め"];
+const pitcherLineupPositions = ["先発", "中継ぎ", "抑え", "ロングリリーフ", "セットアッパー", "左投手", "右投手"];
 function selectedTemplateMeta() {
   const custom = loadCustomTemplates();
   return $$('input[name="player-template"]:checked').map((input) => ({
@@ -1042,6 +1044,20 @@ function teamPicks(memberId) {
 
 function lineupData(memberId) {
   const data = state.lineups[memberId]?.slots || {};
+  const used = new Set();
+  return Object.fromEntries(lineupSections.map((section) => {
+    const values = Array.isArray(data[section.id]) ? data[section.id].slice(0, section.slots.length) : [];
+    return [section.id, [...values, ...Array(section.slots.length).fill("")].slice(0, section.slots.length).map((playerId) => {
+      if (!playerId) return "";
+      if (used.has(playerId)) return "";
+      used.add(playerId);
+      return playerId;
+    })];
+  }));
+}
+
+function lineupPositionData(memberId) {
+  const data = state.lineups[memberId]?.positions || {};
   return Object.fromEntries(lineupSections.map((section) => {
     const values = Array.isArray(data[section.id]) ? data[section.id].slice(0, section.slots.length) : [];
     return [section.id, [...values, ...Array(section.slots.length).fill("")].slice(0, section.slots.length)];
@@ -1063,11 +1079,17 @@ function renderLineupBuilder() {
   const picks = teamPicks(selectedMember.id);
   const counts = playerKindCounts(selectedMember.id);
   const lineup = lineupData(selectedMember.id);
+  const positions = lineupPositionData(selectedMember.id);
   const byId = new Map(picks.map((p) => [p.playerId, p]));
+  const usedPlayerIds = new Set(Object.values(lineup).flat().filter(Boolean));
   const optionHtml = (sectionType, selectedId) => {
     const filtered = picks.filter((p) => sectionType === "pitcher" ? isPitcherLike(p.player) : !isPitcherLike(p.player) && !isStaffLike(p.player));
-    const fallback = filtered.length ? filtered : picks;
-    return [`<option value="">未設定</option>`, ...fallback.map((p) => `<option value="${escapeHtml(p.playerId)}" ${p.playerId === selectedId ? "selected" : ""}>${escapeHtml(p.playerName)}${p.player?.position ? `（${escapeHtml(p.player.position)}）` : ""}</option>`)].join("");
+    const fallback = (filtered.length ? filtered : picks).filter((p) => p.playerId === selectedId || !usedPlayerIds.has(p.playerId));
+    return [`<option value="">未設定</option>`, ...fallback.map((p) => `<option value="${escapeHtml(p.playerId)}" ${p.playerId === selectedId ? "selected" : ""}>${escapeHtml(p.playerName)}</option>`)].join("");
+  };
+  const positionOptionHtml = (sectionType, selectedPosition) => {
+    const options = sectionType === "pitcher" ? pitcherLineupPositions : hitterLineupPositions;
+    return [`<option value="">ポジション未設定</option>`, ...options.map((position) => `<option value="${escapeHtml(position)}" ${position === selectedPosition ? "selected" : ""}>${escapeHtml(position)}</option>`)].join("");
   };
   $("#lineup-builder").innerHTML = `
     <div class="lineup-team-card">
@@ -1081,12 +1103,16 @@ function renderLineupBuilder() {
           <header><p>${section.type === "pitcher" ? "PITCHING STAFF" : "BATTING ORDER"}</p><h4>${section.title}</h4></header>
           ${section.slots.map((label, index) => {
             const selectedId = lineup[section.id][index] || "";
+            const selectedPosition = positions[section.id][index] || "";
             const pick = byId.get(selectedId);
             return `<label class="lineup-slot"><span>${escapeHtml(label)}</span>
-              <select data-lineup-section="${section.id}" data-lineup-index="${index}" ${canEdit ? "" : "disabled"}>
+              <select class="lineup-player-select" data-lineup-player-section="${section.id}" data-lineup-player-index="${index}" ${canEdit ? "" : "disabled"}>
                 ${optionHtml(section.type, selectedId)}
               </select>
-              <small>${pick ? escapeHtml([pick.player?.team, pick.player?.position, `${pick.round}巡目`].filter(Boolean).join(" / ")) : "—"}</small>
+              <select class="lineup-position-select" data-lineup-position-section="${section.id}" data-lineup-position-index="${index}" ${canEdit ? "" : "disabled"}>
+                ${positionOptionHtml(section.type, selectedPosition)}
+              </select>
+              <small>${pick ? escapeHtml([pick.player?.team, `${pick.round}巡目`].filter(Boolean).join(" / ")) : "—"}</small>
             </label>`;
           }).join("")}
         </article>`).join("")}
@@ -1095,12 +1121,14 @@ function renderLineupBuilder() {
     state.lineupMemberId = button.dataset.lineupTeam;
     renderLineupBuilder();
   }));
-  $$("[data-lineup-section]").forEach((select) => select.addEventListener("change", () => saveLineupSelection(selectedMember.id, select.dataset.lineupSection, Number(select.dataset.lineupIndex), select.value)));
+  $$("[data-lineup-player-section]").forEach((select) => select.addEventListener("change", () => saveLineupSelection(selectedMember.id, select.dataset.lineupPlayerSection, Number(select.dataset.lineupPlayerIndex), select.value)));
+  $$("[data-lineup-position-section]").forEach((select) => select.addEventListener("change", () => saveLineupPosition(selectedMember.id, select.dataset.lineupPositionSection, Number(select.dataset.lineupPositionIndex), select.value)));
 }
 
 async function saveLineupSelection(memberId, sectionId, index, playerId) {
   if (memberId !== state.user?.uid && !isHost()) return;
   const slots = lineupData(memberId);
+  const positions = lineupPositionData(memberId);
   Object.keys(slots).forEach((key) => {
     slots[key] = slots[key].map((value, slotIndex) => (value === playerId && !(key === sectionId && slotIndex === index) ? "" : value));
   });
@@ -1109,6 +1137,23 @@ async function saveLineupSelection(memberId, sectionId, index, playerId) {
     await setDoc(doc(db, "rooms", state.roomId, "lineups", memberId), {
       memberId,
       slots,
+      positions,
+      updatedAt: serverTimestamp(),
+      updatedBy: state.user.uid,
+    }, { merge: true });
+  } catch (error) { showError(error); }
+}
+
+async function saveLineupPosition(memberId, sectionId, index, position) {
+  if (memberId !== state.user?.uid && !isHost()) return;
+  const slots = lineupData(memberId);
+  const positions = lineupPositionData(memberId);
+  positions[sectionId][index] = position;
+  try {
+    await setDoc(doc(db, "rooms", state.roomId, "lineups", memberId), {
+      memberId,
+      slots,
+      positions,
       updatedAt: serverTimestamp(),
       updatedBy: state.user.uid,
     }, { merge: true });
